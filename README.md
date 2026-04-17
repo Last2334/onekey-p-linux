@@ -22,17 +22,52 @@
 
 ## 快速开始
 
+### 一键安装命令
+
+| 环境 | 命令 |
+|------|------|
+| 国外服务器 | `curl -fsSL https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh \| sudo bash` |
+| 国内服务器 | `curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh \| sudo bash` |
+
 ### 方法一：一键运行（推荐）
 
+国外服务器或有代理：
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh | sudo bash
 ```
 
+国内服务器（使用镜像）：
+```bash
+curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh | sudo bash
+```
+
+或使用其他镜像：
+```bash
+# 使用 ghps.cc 镜像
+curl -fsSL https://ghps.cc/https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh | sudo bash
+
+# 使用 gh-proxy.com 镜像
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh | sudo bash
+```
+
 ### 方法二：下载后运行
 
+国外服务器：
 ```bash
 # 下载脚本
 curl -O https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh
+
+# 添加执行权限
+chmod +x install.sh
+
+# 运行安装
+sudo ./install.sh
+```
+
+国内服务器（使用镜像）：
+```bash
+# 下载脚本
+curl -O https://ghproxy.com/https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh
 
 # 添加执行权限
 chmod +x install.sh
@@ -55,18 +90,30 @@ sudo ./install.sh
 
 脚本提供多个下载源选择：
 - GitHub 官方源：适合国外服务器或有代理的环境
-- ghproxy.com 镜像：推荐，速度快且稳定
+- ghproxy.com 镜像：推荐国内使用，速度快且稳定
 - ghps.cc 镜像：备用镜像
 - gh-proxy.com 镜像：备用镜像
 
+注意：如果使用国内镜像下载脚本，安装过程中仍需选择 sing-box 的下载源。
+
 ### 卸载
 
+国外服务器：
 ```bash
 # 方法一：一键卸载
 curl -fsSL https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh | sudo bash -s uninstall
 
 # 方法二：使用已下载的脚本
 sudo ./install.sh uninstall
+
+# 方法三：使用 prox 命令
+sudo prox  # 选择卸载选项
+```
+
+国内服务器（使用镜像）：
+```bash
+# 一键卸载
+curl -fsSL https://ghproxy.com/https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh | sudo bash -s uninstall
 ```
 
 ## 使用示例
