@@ -618,7 +618,38 @@ install() {
 main() {
     check_root
     
-    if [ "$1" == "uninstall" ]; then
+    # 如果没有参数，显示菜单
+    if [ -z "$1" ]; then
+        echo ""
+        echo "========================================="
+        echo "  sing-box 全局 TUN 部署脚本"
+        echo "========================================="
+        echo ""
+        echo "请选择操作:"
+        echo "1) 安装 sing-box"
+        echo "2) 卸载 sing-box"
+        echo "0) 退出"
+        echo ""
+        read -p "请选择 [1]: " MENU_CHOICE
+        MENU_CHOICE=${MENU_CHOICE:-1}
+        
+        case $MENU_CHOICE in
+            1)
+                install
+                ;;
+            2)
+                uninstall
+                ;;
+            0)
+                print_info "退出"
+                exit 0
+                ;;
+            *)
+                print_error "无效的选择"
+                exit 1
+                ;;
+        esac
+    elif [ "$1" == "uninstall" ]; then
         uninstall
     else
         install
