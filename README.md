@@ -20,11 +20,17 @@
 
 ## 快速开始
 
-### 安装
+### 方法一：一键运行（推荐）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh | sudo bash
+```
+
+### 方法二：下载后运行
 
 ```bash
 # 下载脚本
-curl -O https://raw.githubusercontent.com/[your-repo]/install.sh
+curl -O https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh
 
 # 添加执行权限
 chmod +x install.sh
@@ -51,6 +57,10 @@ sudo ./install.sh
 ### 卸载
 
 ```bash
+# 方法一：一键卸载
+curl -fsSL https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh | sudo bash -s uninstall
+
+# 方法二：使用已下载的脚本
 sudo ./install.sh uninstall
 ```
 
