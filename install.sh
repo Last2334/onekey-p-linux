@@ -13,6 +13,7 @@ NC='\033[0m'
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/sing-box"
 SERVICE_FILE="/etc/systemd/system/sing-box.service"
+PROX_CMD="/usr/local/bin/prox"
 
 print_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -276,6 +277,229 @@ start_service() {
     fi
 }
 
+create_prox_command() {
+    print_info "创建 prox 管理命令..."
+    
+    cat > "$PROX_CMD" << 'EOF'
+#!/bin/bash
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+print_info() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+show_status() {
+    echo ""
+    echo "========================================="
+    echo "  sing-box 状态信息"
+    echo "========================================="
+    
+    if systemctl is-active --quiet sing-box; then
+        echo -e "服务状态: ${GREEN}运行中${NC}"
+    else
+        echo -e "服务状态: ${RED}已停止${NC}"
+    fi
+    
+    if systemctl is-enabled --quiet sing-box 2>/dev/null; then
+        echo -e "开机自启: ${GREEN}已启用${NC}"
+    else
+        echo -e "开机自启: ${RED}已禁用${NC}"
+    fi
+    
+    if [ -f /etc/sing-box/config.json ]; then
+        echo -e "配置文件: ${GREEN}存在${NC}"
+    else
+        echo -e "配置文件: ${RED}不存在${NC}"
+    fi
+    
+    echo "========================================="
+    echo ""
+}
+
+show_menu() {
+    clear
+    echo ""
+    echo "========================================="
+    echo "  sing-box 管理菜单"
+    echo "========================================="
+    show_status
+    echo "1) 启动服务"
+    echo "2) 停止服务"
+    echo "3) 重启服务"
+    echo "4) 查看状态"
+    echo "5) 查看日志"
+    echo "6) 编辑配置"
+    echo "7) 重新安装"
+    echo "8) 卸载"
+    echo "0) 退出"
+    echo "========================================="
+    echo ""
+}
+
+start_service() {
+    print_info "启动 sing-box 服务..."
+    systemctl start sing-box
+    sleep 1
+    if systemctl is-active --quiet sing-box; then
+        print_info "服务启动成功"
+    else
+        print_error "服务启动失败"
+    fi
+}
+
+stop_service() {
+    print_info "停止 sing-box 服务..."
+    systemctl stop sing-box
+    sleep 1
+    print_info "服务已停止"
+}
+
+restart_service() {
+    print_info "重启 sing-box 服务..."
+    systemctl restart sing-box
+    sleep 1
+    if systemctl is-active --quiet sing-box; then
+        print_info "服务重启成功"
+    else
+        print_error "服务重启失败"
+    fi
+}
+
+view_status() {
+    systemctl status sing-box
+}
+
+view_logs() {
+    print_info "查看实时日志 (按 Ctrl+C 退出)..."
+    sleep 1
+    journalctl -u sing-box -f
+}
+
+edit_config() {
+    if [ ! -f /etc/sing-box/config.json ]; then
+        print_error "配置文件不存在"
+        return
+    fi
+    
+    print_info "编辑配置文件..."
+    ${EDITOR:-nano} /etc/sing-box/config.json
+    
+    read -p "是否重启服务使配置生效? (y/n) [y]: " RESTART
+    RESTART=${RESTART:-y}
+    
+    if [[ "$RESTART" == "y" || "$RESTART" == "Y" ]]; then
+        restart_service
+    fi
+}
+
+reinstall() {
+    print_warning "重新安装将保留当前配置"
+    read -p "确认重新安装? (y/n) [n]: " CONFIRM
+    
+    if [[ "$CONFIRM" == "y" || "$CONFIRM" == "Y" ]]; then
+        print_info "开始重新安装..."
+        curl -fsSL https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh | bash
+    else
+        print_info "取消重新安装"
+    fi
+}
+
+uninstall() {
+    print_warning "卸载将删除所有配置文件和服务"
+    read -p "确认卸载? (y/n) [n]: " CONFIRM
+    
+    if [[ "$CONFIRM" == "y" || "$CONFIRM" == "Y" ]]; then
+        print_info "开始卸载..."
+        curl -fsSL https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh | bash -s uninstall
+        
+        # 删除 prox 命令本身
+        if [ -f /usr/local/bin/prox ]; then
+            rm -f /usr/local/bin/prox
+            print_info "prox 命令已删除"
+        fi
+    else
+        print_info "取消卸载"
+    fi
+}
+
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        print_error "请使用 root 权限运行: sudo prox"
+        exit 1
+    fi
+}
+
+main() {
+    check_root
+    
+    while true; do
+        show_menu
+        read -p "请选择操作 [0-8]: " choice
+        
+        case $choice in
+            1)
+                start_service
+                read -p "按回车键继续..."
+                ;;
+            2)
+                stop_service
+                read -p "按回车键继续..."
+                ;;
+            3)
+                restart_service
+                read -p "按回车键继续..."
+                ;;
+            4)
+                view_status
+                read -p "按回车键继续..."
+                ;;
+            5)
+                view_logs
+                ;;
+            6)
+                edit_config
+                read -p "按回车键继续..."
+                ;;
+            7)
+                reinstall
+                read -p "按回车键继续..."
+                ;;
+            8)
+                uninstall
+                exit 0
+                ;;
+            0)
+                print_info "退出管理菜单"
+                exit 0
+                ;;
+            *)
+                print_error "无效的选择"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+main
+EOF
+    
+    chmod +x "$PROX_CMD"
+    print_info "prox 命令创建完成"
+}
+
 uninstall() {
     print_warning "开始卸载 sing-box..."
     
@@ -308,6 +532,12 @@ uninstall() {
     if [ -f "$INSTALL_DIR/sing-box" ]; then
         print_info "删除 sing-box 二进制文件..."
         rm -f "$INSTALL_DIR/sing-box"
+    fi
+    
+    # 删除 prox 命令
+    if [ -f "$PROX_CMD" ]; then
+        print_info "删除 prox 命令..."
+        rm -f "$PROX_CMD"
     fi
     
     print_info "sing-box 卸载完成"
@@ -365,11 +595,17 @@ install() {
     # 启动服务
     start_service
     
+    # 创建 prox 管理命令
+    create_prox_command
+    
     echo ""
     print_info "========================================="
     print_info "安装完成！"
     print_info "========================================="
+    print_info "快速管理命令: sudo prox"
+    print_info ""
     print_info "常用命令:"
+    print_info "  管理菜单: sudo prox"
     print_info "  查看状态: systemctl status sing-box"
     print_info "  查看日志: journalctl -u sing-box -f"
     print_info "  重启服务: systemctl restart sing-box"
