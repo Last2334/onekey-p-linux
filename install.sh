@@ -237,6 +237,44 @@ EOF
     print_info "配置文件创建完成: $CONFIG_DIR/config.json"
 }
 
+verify_socks5() {
+    local SOCKS5_SERVER=$1
+    local SOCKS5_PORT=$2
+    local SOCKS5_USER=$3
+    local SOCKS5_PASS=$4
+    
+    print_info "验证 SOCKS5 代理连接..."
+    
+    # 检查是否安装了 curl
+    if ! command -v curl &> /dev/null; then
+        print_warning "未安装 curl，跳过代理验证"
+        return 0
+    fi
+    
+    # 构建认证参数
+    AUTH_PARAM=""
+    if [ -n "$SOCKS5_USER" ] && [ -n "$SOCKS5_PASS" ]; then
+        AUTH_PARAM="--proxy-user $SOCKS5_USER:$SOCKS5_PASS"
+    fi
+    
+    # 测试连接（超时 10 秒）
+    if curl -s --connect-timeout 10 --socks5 "${SOCKS5_SERVER}:${SOCKS5_PORT}" $AUTH_PARAM https://www.google.com > /dev/null 2>&1; then
+        print_info "SOCKS5 代理验证成功"
+        return 0
+    else
+        print_warning "SOCKS5 代理验证失败，但将继续安装"
+        print_warning "请确保代理信息正确，否则服务可能无法正常工作"
+        read -p "是否继续安装? (y/n) [y]: " CONTINUE
+        CONTINUE=${CONTINUE:-y}
+        
+        if [[ "$CONTINUE" != "y" && "$CONTINUE" != "Y" ]]; then
+            print_info "取消安装"
+            exit 0
+        fi
+        return 1
+    fi
+}
+
 create_service() {
     print_info "创建 systemd 服务..."
     
@@ -573,6 +611,9 @@ install() {
         exit 1
     fi
     
+    # 验证 SOCKS5 代理
+    verify_socks5 "$SOCKS5_SERVER" "$SOCKS5_PORT" "$SOCKS5_USER" "$SOCKS5_PASS"
+    
     # 检查是否已安装
     if [ -f "$INSTALL_DIR/sing-box" ]; then
         print_warning "检测到已安装 sing-box"
@@ -618,38 +659,7 @@ install() {
 main() {
     check_root
     
-    # 如果没有参数，显示菜单
-    if [ -z "$1" ]; then
-        echo ""
-        echo "========================================="
-        echo "  sing-box 全局 TUN 部署脚本"
-        echo "========================================="
-        echo ""
-        echo "请选择操作:"
-        echo "1) 安装 sing-box"
-        echo "2) 卸载 sing-box"
-        echo "0) 退出"
-        echo ""
-        read -p "请选择 [1]: " MENU_CHOICE
-        MENU_CHOICE=${MENU_CHOICE:-1}
-        
-        case $MENU_CHOICE in
-            1)
-                install
-                ;;
-            2)
-                uninstall
-                ;;
-            0)
-                print_info "退出"
-                exit 0
-                ;;
-            *)
-                print_error "无效的选择"
-                exit 1
-                ;;
-        esac
-    elif [ "$1" == "uninstall" ]; then
+    if [ "$1" == "uninstall" ]; then
         uninstall
     else
         install
