@@ -1165,7 +1165,7 @@ uninstall() {
     print_info "sing-box 卸载完成"
 }
 
-install() {
+run_install() {
     local socks5_server
     local socks5_port
     local need_auth
@@ -1245,7 +1245,7 @@ main() {
     if [ "$1" == "uninstall" ]; then
         uninstall
     else
-        install
+        run_install
     fi
 }
 
