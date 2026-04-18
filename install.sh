@@ -421,8 +421,7 @@ EOF
         "type": "udp",
         "tag": "dns-local",
         "server": "223.5.5.5",
-        "server_port": 53,
-        "detour": "direct"
+        "server_port": 53
       },
       {
         "type": "https",
