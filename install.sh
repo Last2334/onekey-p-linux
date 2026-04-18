@@ -17,6 +17,8 @@ CACHE_FILE="$CONFIG_DIR/cache.db"
 SERVICE_FILE="/etc/systemd/system/sing-box.service"
 PROX_CMD="/usr/local/bin/prox"
 DEFAULT_VERSION="1.13.8"
+DEFAULT_SOCKS5_SERVER="192.168.200.1"
+DEFAULT_SOCKS5_PORT="44444"
 TTY_AVAILABLE=0
 GITHUB_API_URL="https://api.github.com/repos/SagerNet/sing-box/releases/latest"
 
@@ -196,17 +198,31 @@ download_and_install_singbox() {
     local download_url
     local tmp_dir
     local extracted_dir
+    local -a curl_download_args
 
     download_url="https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-${arch}.tar.gz"
 
     print_info "下载 sing-box..."
     print_info "下载地址: $download_url"
+    print_info "如果这里长时间无进度，通常表示当前机器无法直连 GitHub"
 
     tmp_dir=$(mktemp -d)
     trap 'rm -rf "$tmp_dir"' RETURN
 
-    if ! curl -fL --retry 3 --retry-delay 2 -o "$tmp_dir/sing-box.tar.gz" "$download_url"; then
-        print_error "下载失败，请检查网络连接"
+    curl_download_args=(
+        curl
+        -fL
+        --progress-bar
+        --connect-timeout 15
+        --max-time 600
+        --retry 3
+        --retry-delay 2
+        -o "$tmp_dir/sing-box.tar.gz"
+        "$download_url"
+    )
+
+    if ! "${curl_download_args[@]}"; then
+        print_error "下载失败，请检查网络连接或确认当前机器可以直连 GitHub"
         exit 1
     fi
 
@@ -997,13 +1013,13 @@ install() {
     echo "========================================="
     echo ""
 
-    read_prompt socks5_server "请输入 SOCKS5 服务器地址: "
+    read_prompt socks5_server "请输入 SOCKS5 服务器地址 [$DEFAULT_SOCKS5_SERVER]: " "$DEFAULT_SOCKS5_SERVER"
     if [ -z "$socks5_server" ]; then
         print_error "SOCKS5 服务器地址不能为空"
         exit 1
     fi
 
-    read_prompt socks5_port "请输入 SOCKS5 端口 [1080]: " "1080"
+    read_prompt socks5_port "请输入 SOCKS5 端口 [$DEFAULT_SOCKS5_PORT]: " "$DEFAULT_SOCKS5_PORT"
 
     if ! validate_port "$socks5_port"; then
         print_error "SOCKS5 端口无效: $socks5_port"
