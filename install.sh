@@ -17,6 +17,7 @@ CACHE_FILE="$CONFIG_DIR/cache.db"
 SERVICE_FILE="/etc/systemd/system/sing-box.service"
 PROX_CMD="/usr/local/bin/prox"
 DEFAULT_VERSION="1.13.8"
+TTY_AVAILABLE=0
 
 print_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -30,6 +31,14 @@ print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
+init_tty() {
+    if exec 3<>/dev/tty 2>/dev/null; then
+        TTY_AVAILABLE=1
+    else
+        TTY_AVAILABLE=0
+    fi
+}
+
 read_prompt() {
     local __var_name="$1"
     local prompt="$2"
@@ -40,11 +49,16 @@ read_prompt() {
         default_value="$3"
     fi
 
-    if [ -r /dev/tty ]; then
-        printf '%s' "$prompt" > /dev/tty
-        IFS= read -r value < /dev/tty || true
+    if [ "$TTY_AVAILABLE" -eq 1 ]; then
+        printf '%s' "$prompt" >&3
+        IFS= read -r value <&3 || true
     else
-        read -r -p "$prompt" value || true
+        if [ -t 0 ]; then
+            read -r -p "$prompt" value || true
+        else
+            print_error "当前运行方式无法进行交互输入，请下载脚本后执行: curl -O https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh && sudo bash install.sh"
+            exit 1
+        fi
     fi
 
     if [ $# -ge 3 ] && [ -z "$value" ]; then
@@ -59,13 +73,18 @@ read_secret_prompt() {
     local prompt="$2"
     local value=""
 
-    if [ -r /dev/tty ]; then
-        printf '%s' "$prompt" > /dev/tty
-        IFS= read -r -s value < /dev/tty || true
-        printf '\n' > /dev/tty
+    if [ "$TTY_AVAILABLE" -eq 1 ]; then
+        printf '%s' "$prompt" >&3
+        IFS= read -r -s -u 3 value || true
+        printf '\n' >&3
     else
-        read -r -s -p "$prompt" value || true
-        echo ""
+        if [ -t 0 ]; then
+            read -r -s -p "$prompt" value || true
+            echo ""
+        else
+            print_error "当前运行方式无法进行交互输入，请下载脚本后执行: curl -O https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh && sudo bash install.sh"
+            exit 1
+        fi
     fi
 
     printf -v "$__var_name" '%s' "$value"
@@ -75,11 +94,13 @@ pause_prompt() {
     local prompt="${1:-按回车键继续...}"
     local _
 
-    if [ -r /dev/tty ]; then
-        printf '%s' "$prompt" > /dev/tty
-        IFS= read -r _ < /dev/tty || true
+    if [ "$TTY_AVAILABLE" -eq 1 ]; then
+        printf '%s' "$prompt" >&3
+        IFS= read -r _ <&3 || true
     else
-        read -r -p "$prompt" _ || true
+        if [ -t 0 ]; then
+            read -r -p "$prompt" _ || true
+        fi
     fi
 }
 
@@ -553,6 +574,14 @@ print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
+init_tty() {
+    if exec 3<>/dev/tty 2>/dev/null; then
+        TTY_AVAILABLE=1
+    else
+        TTY_AVAILABLE=0
+    fi
+}
+
 read_prompt() {
     local __var_name="$1"
     local prompt="$2"
@@ -563,11 +592,16 @@ read_prompt() {
         default_value="$3"
     fi
 
-    if [ -r /dev/tty ]; then
-        printf '%s' "$prompt" > /dev/tty
-        IFS= read -r value < /dev/tty || true
+    if [ "$TTY_AVAILABLE" -eq 1 ]; then
+        printf '%s' "$prompt" >&3
+        IFS= read -r value <&3 || true
     else
-        read -r -p "$prompt" value || true
+        if [ -t 0 ]; then
+            read -r -p "$prompt" value || true
+        else
+            print_error "当前终端不可交互，请直接在 SSH 终端运行 sudo prox"
+            exit 1
+        fi
     fi
 
     if [ $# -ge 3 ] && [ -z "$value" ]; then
@@ -581,11 +615,13 @@ pause_prompt() {
     local prompt="${1:-按回车键继续...}"
     local _
 
-    if [ -r /dev/tty ]; then
-        printf '%s' "$prompt" > /dev/tty
-        IFS= read -r _ < /dev/tty || true
+    if [ "$TTY_AVAILABLE" -eq 1 ]; then
+        printf '%s' "$prompt" >&3
+        IFS= read -r _ <&3 || true
     else
-        read -r -p "$prompt" _ || true
+        if [ -t 0 ]; then
+            read -r -p "$prompt" _ || true
+        fi
     fi
 }
 
@@ -916,6 +952,7 @@ uninstall() {
 
 main() {
     check_root
+    init_tty
 
     while true; do
         show_menu
@@ -1084,6 +1121,7 @@ install() {
 main() {
     check_root
     check_requirements
+    init_tty
 
     if [ "$1" == "uninstall" ]; then
         uninstall
