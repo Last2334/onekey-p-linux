@@ -158,6 +158,74 @@ format_proxy_host_for_url() {
     fi
 }
 
+append_socks5_proxy_args() {
+    local -n args_ref="$1"
+    local socks5_server="$2"
+    local socks5_port="$3"
+    local socks5_user="$4"
+    local socks5_pass="$5"
+    local proxy_host
+    local proxy_url
+
+    if [ -z "$socks5_server" ] || [ -z "$socks5_port" ]; then
+        return
+    fi
+
+    proxy_host=$(format_proxy_host_for_url "$socks5_server")
+    proxy_url="socks5h://${proxy_host}:${socks5_port}"
+    args_ref+=(--proxy "$proxy_url")
+
+    if [ -n "$socks5_user" ] || [ -n "$socks5_pass" ]; then
+        args_ref+=(--proxy-user "${socks5_user}:${socks5_pass}")
+    fi
+}
+
+extract_json_string() {
+    local json="$1"
+    local key="$2"
+
+    printf '%s' "$json" | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n 1
+}
+
+show_proxy_identity() {
+    local socks5_server="$1"
+    local socks5_port="$2"
+    local socks5_user="$3"
+    local socks5_pass="$4"
+    local response=""
+    local ip=""
+    local country=""
+    local country_code=""
+    local -a curl_args=(curl -fsS --connect-timeout 10 --max-time 20)
+
+    append_socks5_proxy_args curl_args "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
+
+    response=$("${curl_args[@]}" https://ipwho.is/ 2>/dev/null | tr -d '\n' || true)
+    ip=$(extract_json_string "$response" "ip")
+    country=$(extract_json_string "$response" "country")
+    country_code=$(extract_json_string "$response" "country_code")
+
+    if [ -z "$ip" ]; then
+        response=$("${curl_args[@]}" https://ipapi.co/json/ 2>/dev/null | tr -d '\n' || true)
+        ip=$(extract_json_string "$response" "ip")
+        country=$(extract_json_string "$response" "country_name")
+        country_code=$(extract_json_string "$response" "country_code")
+    fi
+
+    if [ -n "$ip" ]; then
+        print_info "代理出口 IP: $ip"
+        if [ -n "$country" ]; then
+            if [ -n "$country_code" ]; then
+                print_info "代理出口国家: $country ($country_code)"
+            else
+                print_info "代理出口国家: $country"
+            fi
+        fi
+    else
+        print_warning "已验证代理可连通，但暂时无法获取出口 IP 和国家"
+    fi
+}
+
 detect_arch() {
     local arch
     arch=$(uname -m)
@@ -180,9 +248,15 @@ detect_arch() {
 }
 
 get_latest_version() {
+    local socks5_server="$1"
+    local socks5_port="$2"
+    local socks5_user="$3"
+    local socks5_pass="$4"
     local latest_version=""
+    local -a curl_args=(curl -fsSL)
 
-    latest_version=$(curl -fsSL "$GITHUB_API_URL" 2>/dev/null | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')
+    append_socks5_proxy_args curl_args "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
+    latest_version=$("${curl_args[@]}" "$GITHUB_API_URL" 2>/dev/null | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')
 
     if [ -z "$latest_version" ]; then
         print_warning "无法自动获取版本，使用默认稳定版本 $DEFAULT_VERSION" >&2
@@ -195,6 +269,10 @@ get_latest_version() {
 download_and_install_singbox() {
     local arch="$1"
     local version="$2"
+    local socks5_server="$3"
+    local socks5_port="$4"
+    local socks5_user="$5"
+    local socks5_pass="$6"
     local download_url
     local tmp_dir
     local extracted_dir
@@ -220,9 +298,10 @@ download_and_install_singbox() {
         -o "$tmp_dir/sing-box.tar.gz"
         "$download_url"
     )
+    append_socks5_proxy_args curl_download_args "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
 
     if ! "${curl_download_args[@]}"; then
-        print_error "下载失败，请检查网络连接或确认当前机器可以直连 GitHub"
+        print_error "下载失败，请检查网络连接或确认 SOCKS5 代理可正常访问 GitHub"
         exit 1
     fi
 
@@ -244,18 +323,22 @@ download_and_install_singbox() {
 }
 
 install_singbox() {
+    local socks5_server="$1"
+    local socks5_port="$2"
+    local socks5_user="$3"
+    local socks5_pass="$4"
     local arch
     local latest_version
 
     print_info "开始安装 sing-box..."
 
     arch=$(detect_arch)
-    print_info "使用 GitHub 官方源下载 sing-box..."
+    print_info "使用已配置 SOCKS5 代理连接 GitHub 官方源..."
     print_info "获取最新版本信息..."
-    latest_version=$(get_latest_version)
+    latest_version=$(get_latest_version "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass")
 
     print_info "版本: v$latest_version"
-    download_and_install_singbox "$arch" "$latest_version"
+    download_and_install_singbox "$arch" "$latest_version" "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
 }
 
 create_config() {
@@ -448,6 +531,7 @@ verify_socks5() {
 
     if "${curl_args[@]}" https://www.gstatic.com/generate_204 >/dev/null 2>&1; then
         print_info "SOCKS5 代理验证成功"
+        show_proxy_identity "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
         return 0
     fi
 
@@ -630,10 +714,70 @@ detect_arch() {
     esac
 }
 
-get_latest_version() {
-    local latest_version
+format_proxy_host_for_url() {
+    local host="$1"
 
-    latest_version=$(curl -fsSL "$GITHUB_API_URL" 2>/dev/null | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')
+    if [[ "$host" == *:* && "$host" != \[*\] ]]; then
+        printf '[%s]' "$host"
+    else
+        printf '%s' "$host"
+    fi
+}
+
+append_socks5_proxy_args() {
+    local -n args_ref="$1"
+    local socks5_server="$2"
+    local socks5_port="$3"
+    local socks5_user="$4"
+    local socks5_pass="$5"
+    local proxy_host
+    local proxy_url
+
+    if [ -z "$socks5_server" ] || [ -z "$socks5_port" ]; then
+        return
+    fi
+
+    proxy_host=$(format_proxy_host_for_url "$socks5_server")
+    proxy_url="socks5h://${proxy_host}:${socks5_port}"
+    args_ref+=(--proxy "$proxy_url")
+
+    if [ -n "$socks5_user" ] || [ -n "$socks5_pass" ]; then
+        args_ref+=(--proxy-user "${socks5_user}:${socks5_pass}")
+    fi
+}
+
+load_current_proxy_settings() {
+    CURRENT_SOCKS5_SERVER=""
+    CURRENT_SOCKS5_PORT=""
+    CURRENT_SOCKS5_USER=""
+    CURRENT_SOCKS5_PASS=""
+
+    if [ ! -f "$CONFIG_FILE" ]; then
+        return 1
+    fi
+
+    CURRENT_SOCKS5_SERVER=$(sed -n 's/.*"server": "\([^"]*\)".*/\1/p' "$CONFIG_FILE" | head -n 1)
+    CURRENT_SOCKS5_PORT=$(sed -n 's/.*"server_port": \([0-9]\+\).*/\1/p' "$CONFIG_FILE" | head -n 1)
+    CURRENT_SOCKS5_USER=$(sed -n 's/.*"username": "\([^"]*\)".*/\1/p' "$CONFIG_FILE" | head -n 1)
+    CURRENT_SOCKS5_PASS=$(sed -n 's/.*"password": "\([^"]*\)".*/\1/p' "$CONFIG_FILE" | head -n 1)
+
+    if [ -z "$CURRENT_SOCKS5_SERVER" ] || [ -z "$CURRENT_SOCKS5_PORT" ]; then
+        return 1
+    fi
+
+    return 0
+}
+
+get_latest_version() {
+    local socks5_server="$1"
+    local socks5_port="$2"
+    local socks5_user="$3"
+    local socks5_pass="$4"
+    local latest_version
+    local -a curl_args=(curl -fsSL)
+
+    append_socks5_proxy_args curl_args "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
+    latest_version=$("${curl_args[@]}" "$GITHUB_API_URL" 2>/dev/null | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')
     if [ -z "$latest_version" ]; then
         latest_version="$DEFAULT_VERSION"
         print_warning "无法自动获取版本，使用默认稳定版本 $latest_version" >&2
@@ -645,17 +789,34 @@ get_latest_version() {
 install_binary() {
     local arch="$1"
     local version="$2"
+    local socks5_server="$3"
+    local socks5_port="$4"
+    local socks5_user="$5"
+    local socks5_pass="$6"
     local download_url
     local tmp_dir
     local extracted_dir
+    local -a curl_download_args
 
     download_url="https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-${arch}.tar.gz"
     tmp_dir=$(mktemp -d)
     trap 'rm -rf "$tmp_dir"' RETURN
 
     print_info "下载 sing-box v$version ..."
-    if ! curl -fL --retry 3 --retry-delay 2 -o "$tmp_dir/sing-box.tar.gz" "$download_url"; then
-        print_error "下载失败，请检查网络连接"
+    curl_download_args=(
+        curl
+        -fL
+        --progress-bar
+        --connect-timeout 15
+        --max-time 600
+        --retry 3
+        --retry-delay 2
+        -o "$tmp_dir/sing-box.tar.gz"
+        "$download_url"
+    )
+    append_socks5_proxy_args curl_download_args "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
+    if ! "${curl_download_args[@]}"; then
+        print_error "下载失败，请检查网络连接或确认 SOCKS5 代理可正常访问 GitHub"
         exit 1
     fi
 
@@ -858,10 +1019,14 @@ reinstall() {
     fi
 
     arch=$(detect_arch)
-    print_info "使用 GitHub 官方源下载 sing-box..."
+    if load_current_proxy_settings; then
+        print_info "使用当前配置中的 SOCKS5 代理连接 GitHub 官方源..."
+    else
+        print_warning "未能从当前配置提取 SOCKS5 代理信息，将直接连接 GitHub 官方源"
+    fi
     print_info "获取最新版本信息..."
-    latest_version=$(get_latest_version)
-    install_binary "$arch" "$latest_version"
+    latest_version=$(get_latest_version "$CURRENT_SOCKS5_SERVER" "$CURRENT_SOCKS5_PORT" "$CURRENT_SOCKS5_USER" "$CURRENT_SOCKS5_PASS")
+    install_binary "$arch" "$latest_version" "$CURRENT_SOCKS5_SERVER" "$CURRENT_SOCKS5_PORT" "$CURRENT_SOCKS5_USER" "$CURRENT_SOCKS5_PASS"
     validate_config
     systemctl daemon-reload
     if ! systemctl restart sing-box; then
@@ -1044,12 +1209,12 @@ install() {
         print_warning "检测到已安装 sing-box"
         read_prompt REINSTALL "是否重新安装 sing-box 二进制? (y/n) [n]: " "n"
         if [[ "$REINSTALL" == "y" || "$REINSTALL" == "Y" ]]; then
-            install_singbox
+            install_singbox "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
         else
             print_info "跳过二进制安装，保留现有版本"
         fi
     else
-        install_singbox
+        install_singbox "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
     fi
 
     create_config "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
