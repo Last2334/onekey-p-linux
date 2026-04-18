@@ -686,6 +686,22 @@ print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
+show_service_logs() {
+    if command -v journalctl >/dev/null 2>&1; then
+        echo ""
+        print_info "sing-box 最近日志:"
+        journalctl -u sing-box -n 50 --no-pager || true
+        echo ""
+    fi
+}
+
+check_tun_support() {
+    if [ ! -c /dev/net/tun ]; then
+        print_warning "未检测到 /dev/net/tun，TUN 模式可能无法启动"
+        print_warning "如果这是 VPS / 容器，请确认内核已启用 TUN 设备"
+    fi
+}
+
 init_tty() {
     if exec 3</dev/tty 4>/dev/tty 2>/dev/null; then
         TTY_AVAILABLE=1
@@ -1262,11 +1278,11 @@ run_install() {
         install_singbox "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
     fi
 
+    create_prox_command
     create_config "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
     validate_config
     create_service
     start_service
-    create_prox_command
 
     echo ""
     print_info "========================================="
