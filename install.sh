@@ -30,6 +30,59 @@ print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
+read_prompt() {
+    local __var_name="$1"
+    local prompt="$2"
+    local default_value=""
+    local value=""
+
+    if [ $# -ge 3 ]; then
+        default_value="$3"
+    fi
+
+    if [ -r /dev/tty ]; then
+        printf '%s' "$prompt" > /dev/tty
+        IFS= read -r value < /dev/tty || true
+    else
+        read -r -p "$prompt" value || true
+    fi
+
+    if [ $# -ge 3 ] && [ -z "$value" ]; then
+        value="$default_value"
+    fi
+
+    printf -v "$__var_name" '%s' "$value"
+}
+
+read_secret_prompt() {
+    local __var_name="$1"
+    local prompt="$2"
+    local value=""
+
+    if [ -r /dev/tty ]; then
+        printf '%s' "$prompt" > /dev/tty
+        IFS= read -r -s value < /dev/tty || true
+        printf '\n' > /dev/tty
+    else
+        read -r -s -p "$prompt" value || true
+        echo ""
+    fi
+
+    printf -v "$__var_name" '%s' "$value"
+}
+
+pause_prompt() {
+    local prompt="${1:-按回车键继续...}"
+    local _
+
+    if [ -r /dev/tty ]; then
+        printf '%s' "$prompt" > /dev/tty
+        IFS= read -r _ < /dev/tty || true
+    else
+        read -r -p "$prompt" _ || true
+    fi
+}
+
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         print_error "请使用 root 权限运行此脚本"
@@ -109,8 +162,7 @@ choose_mirror() {
     echo "2) ghproxy.com 镜像（推荐）"
     echo "3) ghps.cc 镜像"
     echo "4) gh-proxy.com 镜像"
-    read -p "请选择 [2]: " MIRROR_CHOICE
-    MIRROR_CHOICE=${MIRROR_CHOICE:-2}
+    read_prompt MIRROR_CHOICE "请选择 [2]: " "2"
 
     case "$MIRROR_CHOICE" in
         1)
@@ -396,8 +448,7 @@ verify_socks5() {
 
     print_warning "SOCKS5 代理验证失败，但仍可继续安装"
     print_warning "请确保代理信息正确，否则 sing-box 可能无法联网"
-    read -p "是否继续安装? (y/n) [y]: " CONTINUE
-    CONTINUE=${CONTINUE:-y}
+    read_prompt CONTINUE "是否继续安装? (y/n) [y]: " "y"
 
     if [[ "$CONTINUE" != "y" && "$CONTINUE" != "Y" ]]; then
         print_info "取消安装"
@@ -502,6 +553,42 @@ print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
+read_prompt() {
+    local __var_name="$1"
+    local prompt="$2"
+    local default_value=""
+    local value=""
+
+    if [ $# -ge 3 ]; then
+        default_value="$3"
+    fi
+
+    if [ -r /dev/tty ]; then
+        printf '%s' "$prompt" > /dev/tty
+        IFS= read -r value < /dev/tty || true
+    else
+        read -r -p "$prompt" value || true
+    fi
+
+    if [ $# -ge 3 ] && [ -z "$value" ]; then
+        value="$default_value"
+    fi
+
+    printf -v "$__var_name" '%s' "$value"
+}
+
+pause_prompt() {
+    local prompt="${1:-按回车键继续...}"
+    local _
+
+    if [ -r /dev/tty ]; then
+        printf '%s' "$prompt" > /dev/tty
+        IFS= read -r _ < /dev/tty || true
+    else
+        read -r -p "$prompt" _ || true
+    fi
+}
+
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         print_error "请使用 root 权限运行: sudo prox"
@@ -528,8 +615,7 @@ choose_mirror() {
     echo "2) ghproxy.com 镜像（推荐）"
     echo "3) ghps.cc 镜像"
     echo "4) gh-proxy.com 镜像"
-    read -p "请选择 [2]: " MIRROR_CHOICE
-    MIRROR_CHOICE=${MIRROR_CHOICE:-2}
+    read_prompt MIRROR_CHOICE "请选择 [2]: " "2"
 
     case "$MIRROR_CHOICE" in
         1)
@@ -755,12 +841,11 @@ edit_config() {
         print_info "配置校验通过"
     else
         print_warning "配置校验失败，服务不会自动重启"
-        read -p "按回车键继续..."
+        pause_prompt
         return
     fi
 
-    read -p "是否重启服务使配置生效? (y/n) [y]: " RESTART
-    RESTART=${RESTART:-y}
+    read_prompt RESTART "是否重启服务使配置生效? (y/n) [y]: " "y"
     if [[ "$RESTART" == "y" || "$RESTART" == "Y" ]]; then
         restart_service
     fi
@@ -776,7 +861,7 @@ reinstall() {
     fi
 
     print_warning "该操作只会重新安装 sing-box 二进制，并保留当前配置"
-    read -p "确认继续? (y/n) [n]: " CONFIRM
+    read_prompt CONFIRM "确认继续? (y/n) [n]: " "n"
 
     if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
         print_info "取消重新安装"
@@ -818,7 +903,7 @@ uninstall_local() {
 
 uninstall() {
     print_warning "卸载将删除 sing-box、配置文件、缓存和管理命令"
-    read -p "确认卸载? (y/n) [n]: " CONFIRM
+    read_prompt CONFIRM "确认卸载? (y/n) [n]: " "n"
 
     if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
         print_info "取消卸载"
@@ -834,35 +919,35 @@ main() {
 
     while true; do
         show_menu
-        read -p "请选择操作 [0-8]: " choice
+        read_prompt choice "请选择操作 [0-8]: "
 
         case "$choice" in
             1)
                 start_service
-                read -p "按回车键继续..."
+                pause_prompt
                 ;;
             2)
                 stop_service
-                read -p "按回车键继续..."
+                pause_prompt
                 ;;
             3)
                 restart_service
-                read -p "按回车键继续..."
+                pause_prompt
                 ;;
             4)
                 view_status
-                read -p "按回车键继续..."
+                pause_prompt
                 ;;
             5)
                 view_logs
                 ;;
             6)
                 edit_config
-                read -p "按回车键继续..."
+                pause_prompt
                 ;;
             7)
                 reinstall
-                read -p "按回车键继续..."
+                pause_prompt
                 ;;
             8)
                 uninstall
@@ -937,27 +1022,24 @@ install() {
     echo "========================================="
     echo ""
 
-    read -p "请输入 SOCKS5 服务器地址: " socks5_server
+    read_prompt socks5_server "请输入 SOCKS5 服务器地址: "
     if [ -z "$socks5_server" ]; then
         print_error "SOCKS5 服务器地址不能为空"
         exit 1
     fi
 
-    read -p "请输入 SOCKS5 端口 [1080]: " socks5_port
-    socks5_port=${socks5_port:-1080}
+    read_prompt socks5_port "请输入 SOCKS5 端口 [1080]: " "1080"
 
     if ! validate_port "$socks5_port"; then
         print_error "SOCKS5 端口无效: $socks5_port"
         exit 1
     fi
 
-    read -p "是否需要认证? (y/n) [n]: " need_auth
-    need_auth=${need_auth:-n}
+    read_prompt need_auth "是否需要认证? (y/n) [n]: " "n"
 
     if [[ "$need_auth" == "y" || "$need_auth" == "Y" ]]; then
-        read -p "请输入用户名: " socks5_user
-        read -sp "请输入密码: " socks5_pass
-        echo ""
+        read_prompt socks5_user "请输入用户名: "
+        read_secret_prompt socks5_pass "请输入密码: "
 
         if [ -z "$socks5_user" ] || [ -z "$socks5_pass" ]; then
             print_error "已启用认证时，用户名和密码都不能为空"
@@ -969,8 +1051,7 @@ install() {
 
     if [ -f "$INSTALL_DIR/sing-box" ]; then
         print_warning "检测到已安装 sing-box"
-        read -p "是否重新安装 sing-box 二进制? (y/n) [n]: " REINSTALL
-        REINSTALL=${REINSTALL:-n}
+        read_prompt REINSTALL "是否重新安装 sing-box 二进制? (y/n) [n]: " "n"
         if [[ "$REINSTALL" == "y" || "$REINSTALL" == "Y" ]]; then
             install_singbox
         else
