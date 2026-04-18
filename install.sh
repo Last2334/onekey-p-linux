@@ -16,6 +16,7 @@ CONFIG_FILE="$CONFIG_DIR/config.json"
 CACHE_FILE="$CONFIG_DIR/cache.db"
 SERVICE_FILE="/etc/systemd/system/sing-box.service"
 PROX_CMD="/usr/local/bin/prox"
+SCRIPT_VERSION="1.0.0"
 DEFAULT_VERSION="1.13.8"
 DEFAULT_SOCKS5_SERVER="192.168.200.1"
 DEFAULT_SOCKS5_PORT="44444"
@@ -32,6 +33,15 @@ print_error() {
 
 print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+show_banner() {
+    echo ""
+    echo "========================================="
+    echo "  sing-box 全局 TUN 一键部署脚本"
+    echo "  版本: v$SCRIPT_VERSION"
+    echo "========================================="
+    echo ""
 }
 
 init_tty() {
@@ -1172,11 +1182,7 @@ run_install() {
     local socks5_user=""
     local socks5_pass=""
 
-    echo ""
-    echo "========================================="
-    echo "  sing-box 全局 TUN 一键部署脚本"
-    echo "========================================="
-    echo ""
+    show_banner
 
     read_prompt socks5_server "请输入 SOCKS5 服务器地址 [$DEFAULT_SOCKS5_SERVER]: " "$DEFAULT_SOCKS5_SERVER"
     if [ -z "$socks5_server" ]; then
