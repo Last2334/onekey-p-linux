@@ -35,6 +35,22 @@ print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
+show_service_logs() {
+    if command -v journalctl >/dev/null 2>&1; then
+        echo ""
+        print_info "sing-box 最近日志:"
+        journalctl -u sing-box -n 50 --no-pager || true
+        echo ""
+    fi
+}
+
+check_tun_support() {
+    if [ ! -c /dev/net/tun ]; then
+        print_warning "未检测到 /dev/net/tun，TUN 模式可能无法启动"
+        print_warning "如果这是 VPS / 容器，请确认内核已启用 TUN 设备"
+    fi
+}
+
 show_banner() {
     echo ""
     echo "========================================="
@@ -132,6 +148,22 @@ check_requirements() {
             exit 1
         fi
     done
+}
+
+show_service_logs() {
+    if command -v journalctl >/dev/null 2>&1; then
+        echo ""
+        print_info "sing-box 最近日志:"
+        journalctl -u sing-box -n 50 --no-pager || true
+        echo ""
+    fi
+}
+
+check_tun_support() {
+    if [ ! -c /dev/net/tun ]; then
+        print_warning "未检测到 /dev/net/tun，TUN 模式可能无法启动"
+        print_warning "如果这是 VPS / 容器，请确认内核已启用 TUN 设备"
+    fi
 }
 
 json_escape() {
@@ -596,6 +628,7 @@ EOF
 
 start_service() {
     print_info "启动 sing-box 服务..."
+    check_tun_support
 
     if ! systemctl enable sing-box >/dev/null; then
         print_error "启用 sing-box 开机自启失败"
@@ -604,7 +637,7 @@ start_service() {
 
     if ! systemctl restart sing-box; then
         print_error "sing-box 服务启动失败"
-        print_info "查看日志: journalctl -u sing-box -n 50 --no-pager"
+        show_service_logs
         exit 1
     fi
 
@@ -614,7 +647,7 @@ start_service() {
         print_info "sing-box 服务启动成功"
     else
         print_error "sing-box 服务启动失败"
-        print_info "查看日志: journalctl -u sing-box -n 50 --no-pager"
+        show_service_logs
         exit 1
     fi
 }
@@ -934,8 +967,10 @@ show_menu() {
 
 start_service() {
     print_info "启动 sing-box 服务..."
+    check_tun_support
     if ! systemctl start sing-box; then
         print_error "服务启动失败"
+        show_service_logs
         return
     fi
 
@@ -944,6 +979,7 @@ start_service() {
         print_info "服务启动成功"
     else
         print_error "服务启动失败"
+        show_service_logs
     fi
 }
 
@@ -961,9 +997,11 @@ stop_service() {
 restart_service() {
     print_info "重启 sing-box 服务..."
     validate_config
+    check_tun_support
 
     if ! systemctl restart sing-box; then
         print_error "服务重启失败"
+        show_service_logs
         return
     fi
 
@@ -972,6 +1010,7 @@ restart_service() {
         print_info "服务重启成功"
     else
         print_error "服务重启失败"
+        show_service_logs
     fi
 }
 
@@ -1041,6 +1080,7 @@ reinstall() {
     systemctl daemon-reload
     if ! systemctl restart sing-box; then
         print_error "重新安装后服务启动失败，请检查日志"
+        show_service_logs
         return
     fi
     print_info "重新安装完成，当前版本:"
