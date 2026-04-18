@@ -33,7 +33,7 @@ print_warning() {
 }
 
 init_tty() {
-    if exec 3<>/dev/tty 2>/dev/null; then
+    if exec 3</dev/tty 4>/dev/tty 2>/dev/null; then
         TTY_AVAILABLE=1
     else
         TTY_AVAILABLE=0
@@ -51,7 +51,7 @@ read_prompt() {
     fi
 
     if [ "$TTY_AVAILABLE" -eq 1 ]; then
-        printf '%s' "$prompt" >&3
+        printf '%s' "$prompt" >&4
         IFS= read -r value <&3 || true
     else
         if [ -t 0 ]; then
@@ -75,9 +75,9 @@ read_secret_prompt() {
     local value=""
 
     if [ "$TTY_AVAILABLE" -eq 1 ]; then
-        printf '%s' "$prompt" >&3
+        printf '%s' "$prompt" >&4
         IFS= read -r -s -u 3 value || true
-        printf '\n' >&3
+        printf '\n' >&4
     else
         if [ -t 0 ]; then
             read -r -s -p "$prompt" value || true
@@ -96,7 +96,7 @@ pause_prompt() {
     local _
 
     if [ "$TTY_AVAILABLE" -eq 1 ]; then
-        printf '%s' "$prompt" >&3
+        printf '%s' "$prompt" >&4
         IFS= read -r _ <&3 || true
     else
         if [ -t 0 ]; then
@@ -545,7 +545,7 @@ print_warning() {
 }
 
 init_tty() {
-    if exec 3<>/dev/tty 2>/dev/null; then
+    if exec 3</dev/tty 4>/dev/tty 2>/dev/null; then
         TTY_AVAILABLE=1
     else
         TTY_AVAILABLE=0
@@ -563,7 +563,7 @@ read_prompt() {
     fi
 
     if [ "$TTY_AVAILABLE" -eq 1 ]; then
-        printf '%s' "$prompt" >&3
+        printf '%s' "$prompt" >&4
         IFS= read -r value <&3 || true
     else
         if [ -t 0 ]; then
@@ -586,7 +586,7 @@ pause_prompt() {
     local _
 
     if [ "$TTY_AVAILABLE" -eq 1 ]; then
-        printf '%s' "$prompt" >&3
+        printf '%s' "$prompt" >&4
         IFS= read -r _ <&3 || true
     else
         if [ -t 0 ]; then
