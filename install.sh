@@ -18,6 +18,7 @@ SERVICE_FILE="/etc/systemd/system/sing-box.service"
 PROX_CMD="/usr/local/bin/prox"
 DEFAULT_VERSION="1.13.8"
 TTY_AVAILABLE=0
+GITHUB_API_URL="https://api.github.com/repos/SagerNet/sing-box/releases/latest"
 
 print_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -176,47 +177,13 @@ detect_arch() {
     esac
 }
 
-choose_mirror() {
-    echo ""
-    echo "请选择下载源:"
-    echo "1) GitHub 官方源（国外）"
-    echo "2) ghproxy.com 镜像（推荐）"
-    echo "3) ghps.cc 镜像"
-    echo "4) gh-proxy.com 镜像"
-    read_prompt MIRROR_CHOICE "请选择 [2]: " "2"
-
-    case "$MIRROR_CHOICE" in
-        1)
-            MIRROR_PREFIX=""
-            API_URL="https://api.github.com/repos/SagerNet/sing-box/releases/latest"
-            ;;
-        2)
-            MIRROR_PREFIX="https://ghproxy.com/"
-            API_URL="https://ghproxy.com/https://api.github.com/repos/SagerNet/sing-box/releases/latest"
-            ;;
-        3)
-            MIRROR_PREFIX="https://ghps.cc/"
-            API_URL="https://ghps.cc/https://api.github.com/repos/SagerNet/sing-box/releases/latest"
-            ;;
-        4)
-            MIRROR_PREFIX="https://gh-proxy.com/"
-            API_URL="https://gh-proxy.com/https://api.github.com/repos/SagerNet/sing-box/releases/latest"
-            ;;
-        *)
-            print_error "无效的选择"
-            exit 1
-            ;;
-    esac
-}
-
 get_latest_version() {
     local latest_version=""
 
-    print_info "获取最新版本信息..."
-    latest_version=$(curl -fsSL "$API_URL" 2>/dev/null | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')
+    latest_version=$(curl -fsSL "$GITHUB_API_URL" 2>/dev/null | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')
 
     if [ -z "$latest_version" ]; then
-        print_warning "无法自动获取版本，使用默认稳定版本 $DEFAULT_VERSION"
+        print_warning "无法自动获取版本，使用默认稳定版本 $DEFAULT_VERSION" >&2
         latest_version="$DEFAULT_VERSION"
     fi
 
@@ -230,7 +197,7 @@ download_and_install_singbox() {
     local tmp_dir
     local extracted_dir
 
-    download_url="${MIRROR_PREFIX}https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-${arch}.tar.gz"
+    download_url="https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-${arch}.tar.gz"
 
     print_info "下载 sing-box..."
     print_info "下载地址: $download_url"
@@ -239,7 +206,7 @@ download_and_install_singbox() {
     trap 'rm -rf "$tmp_dir"' RETURN
 
     if ! curl -fL --retry 3 --retry-delay 2 -o "$tmp_dir/sing-box.tar.gz" "$download_url"; then
-        print_error "下载失败，请检查网络连接或尝试其他镜像源"
+        print_error "下载失败，请检查网络连接"
         exit 1
     fi
 
@@ -267,7 +234,8 @@ install_singbox() {
     print_info "开始安装 sing-box..."
 
     arch=$(detect_arch)
-    choose_mirror
+    print_info "使用 GitHub 官方源下载 sing-box..."
+    print_info "获取最新版本信息..."
     latest_version=$(get_latest_version)
 
     print_info "版本: v$latest_version"
@@ -561,6 +529,8 @@ CACHE_FILE="$CONFIG_DIR/cache.db"
 SERVICE_FILE="/etc/systemd/system/sing-box.service"
 PROX_CMD="/usr/local/bin/prox"
 DEFAULT_VERSION="1.13.8"
+TTY_AVAILABLE=0
+GITHUB_API_URL="https://api.github.com/repos/SagerNet/sing-box/releases/latest"
 
 print_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -644,46 +614,13 @@ detect_arch() {
     esac
 }
 
-choose_mirror() {
-    echo ""
-    echo "请选择下载源:"
-    echo "1) GitHub 官方源（国外）"
-    echo "2) ghproxy.com 镜像（推荐）"
-    echo "3) ghps.cc 镜像"
-    echo "4) gh-proxy.com 镜像"
-    read_prompt MIRROR_CHOICE "请选择 [2]: " "2"
-
-    case "$MIRROR_CHOICE" in
-        1)
-            MIRROR_PREFIX=""
-            API_URL="https://api.github.com/repos/SagerNet/sing-box/releases/latest"
-            ;;
-        2)
-            MIRROR_PREFIX="https://ghproxy.com/"
-            API_URL="https://ghproxy.com/https://api.github.com/repos/SagerNet/sing-box/releases/latest"
-            ;;
-        3)
-            MIRROR_PREFIX="https://ghps.cc/"
-            API_URL="https://ghps.cc/https://api.github.com/repos/SagerNet/sing-box/releases/latest"
-            ;;
-        4)
-            MIRROR_PREFIX="https://gh-proxy.com/"
-            API_URL="https://gh-proxy.com/https://api.github.com/repos/SagerNet/sing-box/releases/latest"
-            ;;
-        *)
-            print_error "无效的选择"
-            exit 1
-            ;;
-    esac
-}
-
 get_latest_version() {
     local latest_version
 
-    latest_version=$(curl -fsSL "$API_URL" 2>/dev/null | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')
+    latest_version=$(curl -fsSL "$GITHUB_API_URL" 2>/dev/null | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')
     if [ -z "$latest_version" ]; then
         latest_version="$DEFAULT_VERSION"
-        print_warning "无法自动获取版本，使用默认稳定版本 $latest_version"
+        print_warning "无法自动获取版本，使用默认稳定版本 $latest_version" >&2
     fi
 
     printf '%s' "$latest_version"
@@ -696,13 +633,13 @@ install_binary() {
     local tmp_dir
     local extracted_dir
 
-    download_url="${MIRROR_PREFIX}https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-${arch}.tar.gz"
+    download_url="https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-${arch}.tar.gz"
     tmp_dir=$(mktemp -d)
     trap 'rm -rf "$tmp_dir"' RETURN
 
     print_info "下载 sing-box v$version ..."
     if ! curl -fL --retry 3 --retry-delay 2 -o "$tmp_dir/sing-box.tar.gz" "$download_url"; then
-        print_error "下载失败，请检查网络连接或切换镜像源"
+        print_error "下载失败，请检查网络连接"
         exit 1
     fi
 
@@ -905,7 +842,8 @@ reinstall() {
     fi
 
     arch=$(detect_arch)
-    choose_mirror
+    print_info "使用 GitHub 官方源下载 sing-box..."
+    print_info "获取最新版本信息..."
     latest_version=$(get_latest_version)
     install_binary "$arch" "$latest_version"
     validate_config
