@@ -12,8 +12,11 @@ NC='\033[0m'
 
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/sing-box"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+CACHE_FILE="$CONFIG_DIR/cache.db"
 SERVICE_FILE="/etc/systemd/system/sing-box.service"
 PROX_CMD="/usr/local/bin/prox"
+DEFAULT_VERSION="1.13.8"
 
 print_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -34,28 +37,72 @@ check_root() {
     fi
 }
 
-install_singbox() {
-    print_info "开始安装 sing-box..."
-    
-    # 检测系统架构
-    ARCH=$(uname -m)
-    case $ARCH in
+check_requirements() {
+    local cmd
+    for cmd in curl tar mktemp systemctl; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            print_error "缺少依赖命令: $cmd"
+            exit 1
+        fi
+    done
+}
+
+json_escape() {
+    local value="$1"
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    value=${value//$'\n'/\\n}
+    value=${value//$'\r'/\\r}
+    value=${value//$'\t'/\\t}
+    printf '%s' "$value"
+}
+
+validate_port() {
+    local port="$1"
+
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        return 1
+    fi
+
+    if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        return 1
+    fi
+
+    return 0
+}
+
+format_proxy_host_for_url() {
+    local host="$1"
+
+    if [[ "$host" == *:* && "$host" != \[*\] ]]; then
+        printf '[%s]' "$host"
+    else
+        printf '%s' "$host"
+    fi
+}
+
+detect_arch() {
+    local arch
+    arch=$(uname -m)
+
+    case "$arch" in
         x86_64)
-            ARCH="amd64"
+            echo "amd64"
             ;;
         aarch64)
-            ARCH="arm64"
+            echo "arm64"
             ;;
         armv7l)
-            ARCH="armv7"
+            echo "armv7"
             ;;
         *)
-            print_error "不支持的架构: $ARCH"
+            print_error "不支持的架构: $arch"
             exit 1
             ;;
     esac
-    
-    # 选择下载源
+}
+
+choose_mirror() {
     echo ""
     echo "请选择下载源:"
     echo "1) GitHub 官方源（国外）"
@@ -64,8 +111,8 @@ install_singbox() {
     echo "4) gh-proxy.com 镜像"
     read -p "请选择 [2]: " MIRROR_CHOICE
     MIRROR_CHOICE=${MIRROR_CHOICE:-2}
-    
-    case $MIRROR_CHOICE in
+
+    case "$MIRROR_CHOICE" in
         1)
             MIRROR_PREFIX=""
             API_URL="https://api.github.com/repos/SagerNet/sing-box/releases/latest"
@@ -87,72 +134,100 @@ install_singbox() {
             exit 1
             ;;
     esac
-    
-    # 获取最新版本
+}
+
+get_latest_version() {
+    local latest_version=""
+
     print_info "获取最新版本信息..."
-    LATEST_VERSION=$(curl -s "$API_URL" | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
-    
-    if [ -z "$LATEST_VERSION" ]; then
-        print_warning "无法自动获取版本，使用默认版本 1.9.0"
-        LATEST_VERSION="1.9.0"
+    latest_version=$(curl -fsSL "$API_URL" 2>/dev/null | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')
+
+    if [ -z "$latest_version" ]; then
+        print_warning "无法自动获取版本，使用默认稳定版本 $DEFAULT_VERSION"
+        latest_version="$DEFAULT_VERSION"
     fi
-    
-    print_info "版本: v$LATEST_VERSION"
-    
-    # 下载 sing-box
-    DOWNLOAD_URL="${MIRROR_PREFIX}https://github.com/SagerNet/sing-box/releases/download/v${LATEST_VERSION}/sing-box-${LATEST_VERSION}-linux-${ARCH}.tar.gz"
+
+    printf '%s' "$latest_version"
+}
+
+download_and_install_singbox() {
+    local arch="$1"
+    local version="$2"
+    local download_url
+    local tmp_dir
+    local extracted_dir
+
+    download_url="${MIRROR_PREFIX}https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-${arch}.tar.gz"
+
     print_info "下载 sing-box..."
-    print_info "下载地址: $DOWNLOAD_URL"
-    
-    TMP_DIR=$(mktemp -d)
-    cd "$TMP_DIR"
-    
-    if ! curl -L -o sing-box.tar.gz "$DOWNLOAD_URL"; then
+    print_info "下载地址: $download_url"
+
+    tmp_dir=$(mktemp -d)
+    trap 'rm -rf "$tmp_dir"' RETURN
+
+    if ! curl -fL --retry 3 --retry-delay 2 -o "$tmp_dir/sing-box.tar.gz" "$download_url"; then
         print_error "下载失败，请检查网络连接或尝试其他镜像源"
-        rm -rf "$TMP_DIR"
         exit 1
     fi
-    
-    # 解压并安装
+
     print_info "解压文件..."
-    tar -xzf sing-box.tar.gz
-    mv sing-box-${LATEST_VERSION}-linux-${ARCH}/sing-box "$INSTALL_DIR/"
-    chmod +x "$INSTALL_DIR/sing-box"
-    
-    rm -rf "$TMP_DIR"
+    tar -xzf "$tmp_dir/sing-box.tar.gz" -C "$tmp_dir"
+
+    extracted_dir="$tmp_dir/sing-box-${version}-linux-${arch}"
+    if [ ! -f "$extracted_dir/sing-box" ]; then
+        print_error "下载内容异常，未找到 sing-box 可执行文件"
+        exit 1
+    fi
+
+    install -m 0755 "$extracted_dir/sing-box" "$INSTALL_DIR/sing-box"
+    trap - RETURN
+    rm -rf "$tmp_dir"
+
     print_info "sing-box 安装完成"
-    
-    # 显示版本信息
     "$INSTALL_DIR/sing-box" version
 }
 
+install_singbox() {
+    local arch
+    local latest_version
+
+    print_info "开始安装 sing-box..."
+
+    arch=$(detect_arch)
+    choose_mirror
+    latest_version=$(get_latest_version)
+
+    print_info "版本: v$latest_version"
+    download_and_install_singbox "$arch" "$latest_version"
+}
+
 create_config() {
-    local SOCKS5_SERVER=$1
-    local SOCKS5_PORT=$2
-    local SOCKS5_USER=$3
-    local SOCKS5_PASS=$4
-    
+    local socks5_server="$1"
+    local socks5_port="$2"
+    local socks5_user="$3"
+    local socks5_pass="$4"
+    local escaped_server
+    local escaped_user
+    local escaped_pass
+    local auth_block=""
+
     print_info "创建配置文件..."
-    
+
     mkdir -p "$CONFIG_DIR"
-    
-    # 构建 socks5 outbound 配置
-    SOCKS5_CONFIG="{
-      \"type\": \"socks\",
-      \"tag\": \"proxy\",
-      \"server\": \"$SOCKS5_SERVER\",
-      \"server_port\": $SOCKS5_PORT"
-    
-    if [ -n "$SOCKS5_USER" ] && [ -n "$SOCKS5_PASS" ]; then
-        SOCKS5_CONFIG="$SOCKS5_CONFIG,
-      \"username\": \"$SOCKS5_USER\",
-      \"password\": \"$SOCKS5_PASS\""
+
+    escaped_server=$(json_escape "$socks5_server")
+    escaped_user=$(json_escape "$socks5_user")
+    escaped_pass=$(json_escape "$socks5_pass")
+
+    if [ -n "$socks5_user" ] || [ -n "$socks5_pass" ]; then
+        auth_block=$(cat <<EOF
+      "username": "$escaped_user",
+      "password": "$escaped_pass",
+EOF
+)
     fi
-    
-    SOCKS5_CONFIG="$SOCKS5_CONFIG
-    }"
-    
-    cat > "$CONFIG_DIR/config.json" << EOF
+
+    cat > "$CONFIG_FILE" <<EOF
 {
   "log": {
     "level": "info",
@@ -161,132 +236,202 @@ create_config() {
   "dns": {
     "servers": [
       {
-        "tag": "remote",
-        "address": "tls://8.8.8.8"
+        "type": "udp",
+        "tag": "dns-local",
+        "server": "223.5.5.5",
+        "server_port": 53,
+        "detour": "direct"
       },
       {
-        "tag": "local",
-        "address": "223.5.5.5",
-        "detour": "direct"
+        "type": "https",
+        "tag": "dns-remote",
+        "server": "dns.google",
+        "server_port": 443,
+        "path": "/dns-query",
+        "domain_resolver": "dns-local",
+        "detour": "proxy"
       }
     ],
     "rules": [
       {
-        "outbound": "any",
-        "server": "local"
+        "rule_set": "geosite-cn",
+        "action": "route",
+        "server": "dns-local"
       },
       {
-        "clash_mode": "direct",
-        "server": "local"
-      },
-      {
-        "clash_mode": "global",
-        "server": "remote"
-      },
-      {
-        "geosite": "cn",
-        "server": "local"
+        "domain_suffix": [
+          ".lan",
+          ".local"
+        ],
+        "action": "route",
+        "server": "dns-local"
       }
-    ]
+    ],
+    "final": "dns-remote",
+    "strategy": "prefer_ipv4",
+    "reverse_mapping": true
   },
   "inbounds": [
     {
       "type": "tun",
       "tag": "tun-in",
       "interface_name": "tun0",
-      "inet4_address": "172.19.0.1/30",
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
       "auto_route": true,
       "strict_route": true,
-      "stack": "system",
-      "sniff": true
+      "stack": "system"
     }
   ],
   "outbounds": [
-    $SOCKS5_CONFIG,
+    {
+      "type": "socks",
+      "tag": "proxy",
+      "server": "$escaped_server",
+      "server_port": $socks5_port,
+$auth_block      "domain_resolver": "dns-local"
+    },
     {
       "type": "direct",
       "tag": "direct"
-    },
-    {
-      "type": "block",
-      "tag": "block"
-    },
-    {
-      "type": "dns",
-      "tag": "dns-out"
     }
   ],
   "route": {
     "rules": [
       {
-        "protocol": "dns",
-        "outbound": "dns-out"
+        "inbound": "tun-in",
+        "action": "sniff"
       },
       {
-        "geosite": "cn",
-        "geoip": ["private", "cn"],
+        "inbound": "tun-in",
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "inbound": "tun-in",
+        "network": "icmp",
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "inbound": "tun-in",
+        "ip_is_private": true,
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "inbound": "tun-in",
+        "rule_set": [
+          "geosite-cn",
+          "geoip-cn"
+        ],
+        "action": "route",
         "outbound": "direct"
       }
     ],
-    "final": "proxy",
-    "auto_detect_interface": true
+    "rule_set": [
+      {
+        "tag": "geosite-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
+        "download_detour": "proxy",
+        "update_interval": "24h"
+      },
+      {
+        "tag": "geoip-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+        "download_detour": "proxy",
+        "update_interval": "24h"
+      }
+    ],
+    "auto_detect_interface": true,
+    "default_domain_resolver": "dns-local",
+    "final": "proxy"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "$CACHE_FILE"
+    }
   }
 }
 EOF
-    
-    print_info "配置文件创建完成: $CONFIG_DIR/config.json"
+
+    print_info "配置文件创建完成: $CONFIG_FILE"
 }
 
 verify_socks5() {
-    local SOCKS5_SERVER=$1
-    local SOCKS5_PORT=$2
-    local SOCKS5_USER=$3
-    local SOCKS5_PASS=$4
-    
+    local socks5_server="$1"
+    local socks5_port="$2"
+    local socks5_user="$3"
+    local socks5_pass="$4"
+    local proxy_host
+    local proxy_url
+    local -a curl_args
+
     print_info "验证 SOCKS5 代理连接..."
-    
-    # 检查是否安装了 curl
-    if ! command -v curl &> /dev/null; then
+
+    if ! command -v curl >/dev/null 2>&1; then
         print_warning "未安装 curl，跳过代理验证"
         return 0
     fi
-    
-    # 构建认证参数
-    AUTH_PARAM=""
-    if [ -n "$SOCKS5_USER" ] && [ -n "$SOCKS5_PASS" ]; then
-        AUTH_PARAM="--proxy-user $SOCKS5_USER:$SOCKS5_PASS"
+
+    proxy_host=$(format_proxy_host_for_url "$socks5_server")
+    proxy_url="socks5h://${proxy_host}:${socks5_port}"
+    curl_args=(curl -fsS --connect-timeout 10 --max-time 20 --proxy "$proxy_url")
+
+    if [ -n "$socks5_user" ] || [ -n "$socks5_pass" ]; then
+        curl_args+=(--proxy-user "${socks5_user}:${socks5_pass}")
     fi
-    
-    # 测试连接（超时 10 秒）
-    if curl -s --connect-timeout 10 --socks5 "${SOCKS5_SERVER}:${SOCKS5_PORT}" $AUTH_PARAM https://www.google.com > /dev/null 2>&1; then
+
+    if "${curl_args[@]}" https://www.gstatic.com/generate_204 >/dev/null 2>&1; then
         print_info "SOCKS5 代理验证成功"
         return 0
-    else
-        print_warning "SOCKS5 代理验证失败，但将继续安装"
-        print_warning "请确保代理信息正确，否则服务可能无法正常工作"
-        read -p "是否继续安装? (y/n) [y]: " CONTINUE
-        CONTINUE=${CONTINUE:-y}
-        
-        if [[ "$CONTINUE" != "y" && "$CONTINUE" != "Y" ]]; then
-            print_info "取消安装"
-            exit 0
-        fi
-        return 1
     fi
+
+    print_warning "SOCKS5 代理验证失败，但仍可继续安装"
+    print_warning "请确保代理信息正确，否则 sing-box 可能无法联网"
+    read -p "是否继续安装? (y/n) [y]: " CONTINUE
+    CONTINUE=${CONTINUE:-y}
+
+    if [[ "$CONTINUE" != "y" && "$CONTINUE" != "Y" ]]; then
+        print_info "取消安装"
+        exit 0
+    fi
+
+    return 0
+}
+
+validate_config() {
+    print_info "校验 sing-box 配置..."
+
+    if ! "$INSTALL_DIR/sing-box" check -c "$CONFIG_FILE"; then
+        print_error "配置校验失败，请检查 $CONFIG_FILE"
+        exit 1
+    fi
+
+    print_info "配置校验通过"
 }
 
 create_service() {
     print_info "创建 systemd 服务..."
-    
-    cat > "$SERVICE_FILE" << EOF
+
+    cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=sing-box service
 Documentation=https://sing-box.sagernet.org
-After=network.target nss-lookup.target
+After=network-online.target nss-lookup.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=$INSTALL_DIR/sing-box run -c $CONFIG_DIR/config.json
+ExecStartPre=$INSTALL_DIR/sing-box check -c $CONFIG_FILE
+ExecStart=$INSTALL_DIR/sing-box run -c $CONFIG_FILE
 Restart=on-failure
 RestartSec=5s
 LimitNOFILE=infinity
@@ -294,38 +439,56 @@ LimitNOFILE=infinity
 [Install]
 WantedBy=multi-user.target
 EOF
-    
+
     systemctl daemon-reload
     print_info "systemd 服务创建完成"
 }
 
 start_service() {
     print_info "启动 sing-box 服务..."
-    systemctl enable sing-box
-    systemctl start sing-box
-    
+
+    if ! systemctl enable sing-box >/dev/null; then
+        print_error "启用 sing-box 开机自启失败"
+        exit 1
+    fi
+
+    if ! systemctl restart sing-box; then
+        print_error "sing-box 服务启动失败"
+        print_info "查看日志: journalctl -u sing-box -n 50 --no-pager"
+        exit 1
+    fi
+
     sleep 2
-    
+
     if systemctl is-active --quiet sing-box; then
         print_info "sing-box 服务启动成功"
     else
         print_error "sing-box 服务启动失败"
-        print_info "查看日志: journalctl -u sing-box -f"
+        print_info "查看日志: journalctl -u sing-box -n 50 --no-pager"
         exit 1
     fi
 }
 
 create_prox_command() {
     print_info "创建 prox 管理命令..."
-    
-    cat > "$PROX_CMD" << 'EOF'
+
+    cat > "$PROX_CMD" <<'EOF'
 #!/bin/bash
+
+set -e
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 NC='\033[0m'
+
+INSTALL_DIR="/usr/local/bin"
+CONFIG_DIR="/etc/sing-box"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+CACHE_FILE="$CONFIG_DIR/cache.db"
+SERVICE_FILE="/etc/systemd/system/sing-box.service"
+PROX_CMD="/usr/local/bin/prox"
+DEFAULT_VERSION="1.13.8"
 
 print_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -339,30 +502,166 @@ print_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        print_error "请使用 root 权限运行: sudo prox"
+        exit 1
+    fi
+}
+
+detect_arch() {
+    case "$(uname -m)" in
+        x86_64) echo "amd64" ;;
+        aarch64) echo "arm64" ;;
+        armv7l) echo "armv7" ;;
+        *)
+            print_error "不支持的架构: $(uname -m)"
+            exit 1
+            ;;
+    esac
+}
+
+choose_mirror() {
+    echo ""
+    echo "请选择下载源:"
+    echo "1) GitHub 官方源（国外）"
+    echo "2) ghproxy.com 镜像（推荐）"
+    echo "3) ghps.cc 镜像"
+    echo "4) gh-proxy.com 镜像"
+    read -p "请选择 [2]: " MIRROR_CHOICE
+    MIRROR_CHOICE=${MIRROR_CHOICE:-2}
+
+    case "$MIRROR_CHOICE" in
+        1)
+            MIRROR_PREFIX=""
+            API_URL="https://api.github.com/repos/SagerNet/sing-box/releases/latest"
+            ;;
+        2)
+            MIRROR_PREFIX="https://ghproxy.com/"
+            API_URL="https://ghproxy.com/https://api.github.com/repos/SagerNet/sing-box/releases/latest"
+            ;;
+        3)
+            MIRROR_PREFIX="https://ghps.cc/"
+            API_URL="https://ghps.cc/https://api.github.com/repos/SagerNet/sing-box/releases/latest"
+            ;;
+        4)
+            MIRROR_PREFIX="https://gh-proxy.com/"
+            API_URL="https://gh-proxy.com/https://api.github.com/repos/SagerNet/sing-box/releases/latest"
+            ;;
+        *)
+            print_error "无效的选择"
+            exit 1
+            ;;
+    esac
+}
+
+get_latest_version() {
+    local latest_version
+
+    latest_version=$(curl -fsSL "$API_URL" 2>/dev/null | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')
+    if [ -z "$latest_version" ]; then
+        latest_version="$DEFAULT_VERSION"
+        print_warning "无法自动获取版本，使用默认稳定版本 $latest_version"
+    fi
+
+    printf '%s' "$latest_version"
+}
+
+install_binary() {
+    local arch="$1"
+    local version="$2"
+    local download_url
+    local tmp_dir
+    local extracted_dir
+
+    download_url="${MIRROR_PREFIX}https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-${arch}.tar.gz"
+    tmp_dir=$(mktemp -d)
+    trap 'rm -rf "$tmp_dir"' RETURN
+
+    print_info "下载 sing-box v$version ..."
+    if ! curl -fL --retry 3 --retry-delay 2 -o "$tmp_dir/sing-box.tar.gz" "$download_url"; then
+        print_error "下载失败，请检查网络连接或切换镜像源"
+        exit 1
+    fi
+
+    tar -xzf "$tmp_dir/sing-box.tar.gz" -C "$tmp_dir"
+    extracted_dir="$tmp_dir/sing-box-${version}-linux-${arch}"
+
+    if [ ! -f "$extracted_dir/sing-box" ]; then
+        print_error "下载内容异常，未找到 sing-box 可执行文件"
+        exit 1
+    fi
+
+    install -m 0755 "$extracted_dir/sing-box" "$INSTALL_DIR/sing-box"
+    trap - RETURN
+    rm -rf "$tmp_dir"
+}
+
+validate_config() {
+    if [ ! -f "$CONFIG_FILE" ]; then
+        print_error "配置文件不存在: $CONFIG_FILE"
+        exit 1
+    fi
+
+    print_info "校验配置..."
+    "$INSTALL_DIR/sing-box" check -c "$CONFIG_FILE"
+}
+
+pick_editor() {
+    if [ -n "${EDITOR:-}" ] && command -v "$EDITOR" >/dev/null 2>&1; then
+        printf '%s' "$EDITOR"
+        return
+    fi
+
+    if command -v nano >/dev/null 2>&1; then
+        printf '%s' "nano"
+        return
+    fi
+
+    if command -v vim >/dev/null 2>&1; then
+        printf '%s' "vim"
+        return
+    fi
+
+    if command -v vi >/dev/null 2>&1; then
+        printf '%s' "vi"
+        return
+    fi
+
+    print_error "未找到可用编辑器，请设置 EDITOR 环境变量后重试"
+    exit 1
+}
+
 show_status() {
     echo ""
     echo "========================================="
     echo "  sing-box 状态信息"
     echo "========================================="
-    
+
     if systemctl is-active --quiet sing-box; then
         echo -e "服务状态: ${GREEN}运行中${NC}"
     else
         echo -e "服务状态: ${RED}已停止${NC}"
     fi
-    
+
     if systemctl is-enabled --quiet sing-box 2>/dev/null; then
         echo -e "开机自启: ${GREEN}已启用${NC}"
     else
-        echo -e "开机自启: ${RED}已禁用${NC}"
+        echo -e "开机自启: ${RED}未启用${NC}"
     fi
-    
-    if [ -f /etc/sing-box/config.json ]; then
-        echo -e "配置文件: ${GREEN}存在${NC}"
+
+    if [ -f "$INSTALL_DIR/sing-box" ]; then
+        echo -e "程序版本: ${GREEN}$("$INSTALL_DIR/sing-box" version | head -n 1)${NC}"
+    else
+        echo -e "程序版本: ${RED}未安装${NC}"
+    fi
+
+    if [ -f "$CONFIG_FILE" ]; then
+        echo -e "配置文件: ${GREEN}$CONFIG_FILE${NC}"
     else
         echo -e "配置文件: ${RED}不存在${NC}"
     fi
-    
+
     echo "========================================="
     echo ""
 }
@@ -380,7 +679,7 @@ show_menu() {
     echo "4) 查看状态"
     echo "5) 查看日志"
     echo "6) 编辑配置"
-    echo "7) 重新安装"
+    echo "7) 重新安装 sing-box 二进制"
     echo "8) 卸载"
     echo "0) 退出"
     echo "========================================="
@@ -389,7 +688,11 @@ show_menu() {
 
 start_service() {
     print_info "启动 sing-box 服务..."
-    systemctl start sing-box
+    if ! systemctl start sing-box; then
+        print_error "服务启动失败"
+        return
+    fi
+
     sleep 1
     if systemctl is-active --quiet sing-box; then
         print_info "服务启动成功"
@@ -400,14 +703,24 @@ start_service() {
 
 stop_service() {
     print_info "停止 sing-box 服务..."
-    systemctl stop sing-box
+    if ! systemctl stop sing-box; then
+        print_error "服务停止失败"
+        return
+    fi
+
     sleep 1
     print_info "服务已停止"
 }
 
 restart_service() {
     print_info "重启 sing-box 服务..."
-    systemctl restart sing-box
+    validate_config
+
+    if ! systemctl restart sing-box; then
+        print_error "服务重启失败"
+        return
+    fi
+
     sleep 1
     if systemctl is-active --quiet sing-box; then
         print_info "服务重启成功"
@@ -417,7 +730,7 @@ restart_service() {
 }
 
 view_status() {
-    systemctl status sing-box
+    systemctl --no-pager --full status sing-box
 }
 
 view_logs() {
@@ -427,67 +740,103 @@ view_logs() {
 }
 
 edit_config() {
-    if [ ! -f /etc/sing-box/config.json ]; then
+    local editor
+
+    if [ ! -f "$CONFIG_FILE" ]; then
         print_error "配置文件不存在"
         return
     fi
-    
-    print_info "编辑配置文件..."
-    ${EDITOR:-nano} /etc/sing-box/config.json
-    
+
+    editor=$(pick_editor)
+    print_info "使用编辑器: $editor"
+    "$editor" "$CONFIG_FILE"
+
+    if "$INSTALL_DIR/sing-box" check -c "$CONFIG_FILE"; then
+        print_info "配置校验通过"
+    else
+        print_warning "配置校验失败，服务不会自动重启"
+        read -p "按回车键继续..."
+        return
+    fi
+
     read -p "是否重启服务使配置生效? (y/n) [y]: " RESTART
     RESTART=${RESTART:-y}
-    
     if [[ "$RESTART" == "y" || "$RESTART" == "Y" ]]; then
         restart_service
     fi
 }
 
 reinstall() {
-    print_warning "重新安装将保留当前配置"
-    read -p "确认重新安装? (y/n) [n]: " CONFIRM
-    
-    if [[ "$CONFIRM" == "y" || "$CONFIRM" == "Y" ]]; then
-        print_info "开始重新安装..."
-        curl -fsSL https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh | bash
-    else
-        print_info "取消重新安装"
+    local arch
+    local latest_version
+
+    if [ ! -f "$CONFIG_FILE" ]; then
+        print_error "未找到现有配置文件，无法执行保留配置的重装"
+        return
     fi
+
+    print_warning "该操作只会重新安装 sing-box 二进制，并保留当前配置"
+    read -p "确认继续? (y/n) [n]: " CONFIRM
+
+    if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+        print_info "取消重新安装"
+        return
+    fi
+
+    arch=$(detect_arch)
+    choose_mirror
+    latest_version=$(get_latest_version)
+    install_binary "$arch" "$latest_version"
+    validate_config
+    systemctl daemon-reload
+    if ! systemctl restart sing-box; then
+        print_error "重新安装后服务启动失败，请检查日志"
+        return
+    fi
+    print_info "重新安装完成，当前版本:"
+    "$INSTALL_DIR/sing-box" version
+}
+
+uninstall_local() {
+    if systemctl is-active --quiet sing-box; then
+        systemctl stop sing-box
+    fi
+
+    if systemctl is-enabled --quiet sing-box 2>/dev/null; then
+        systemctl disable sing-box >/dev/null
+    fi
+
+    if [ -f "$SERVICE_FILE" ]; then
+        rm -f "$SERVICE_FILE"
+        systemctl daemon-reload
+    fi
+
+    rm -rf "$CONFIG_DIR"
+    rm -f "$INSTALL_DIR/sing-box"
+    rm -f "$PROX_CMD"
 }
 
 uninstall() {
-    print_warning "卸载将删除所有配置文件和服务"
+    print_warning "卸载将删除 sing-box、配置文件、缓存和管理命令"
     read -p "确认卸载? (y/n) [n]: " CONFIRM
-    
-    if [[ "$CONFIRM" == "y" || "$CONFIRM" == "Y" ]]; then
-        print_info "开始卸载..."
-        curl -fsSL https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh | bash -s uninstall
-        
-        # 删除 prox 命令本身
-        if [ -f /usr/local/bin/prox ]; then
-            rm -f /usr/local/bin/prox
-            print_info "prox 命令已删除"
-        fi
-    else
-        print_info "取消卸载"
-    fi
-}
 
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        print_error "请使用 root 权限运行: sudo prox"
-        exit 1
+    if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+        print_info "取消卸载"
+        return
     fi
+
+    uninstall_local
+    print_info "卸载完成"
 }
 
 main() {
     check_root
-    
+
     while true; do
         show_menu
         read -p "请选择操作 [0-8]: " choice
-        
-        case $choice in
+
+        case "$choice" in
             1)
                 start_service
                 read -p "按回车键继续..."
@@ -533,132 +882,128 @@ main() {
 
 main
 EOF
-    
+
     chmod +x "$PROX_CMD"
     print_info "prox 命令创建完成"
 }
 
 uninstall() {
     print_warning "开始卸载 sing-box..."
-    
-    # 停止服务
+
     if systemctl is-active --quiet sing-box; then
         print_info "停止 sing-box 服务..."
         systemctl stop sing-box
     fi
-    
-    # 禁用服务
+
     if systemctl is-enabled --quiet sing-box 2>/dev/null; then
         print_info "禁用 sing-box 服务..."
-        systemctl disable sing-box
+        systemctl disable sing-box >/dev/null
     fi
-    
-    # 删除服务文件
+
     if [ -f "$SERVICE_FILE" ]; then
         print_info "删除服务文件..."
         rm -f "$SERVICE_FILE"
         systemctl daemon-reload
     fi
-    
-    # 删除配置文件
+
     if [ -d "$CONFIG_DIR" ]; then
-        print_info "删除配置文件..."
+        print_info "删除配置文件和缓存..."
         rm -rf "$CONFIG_DIR"
     fi
-    
-    # 删除二进制文件
+
     if [ -f "$INSTALL_DIR/sing-box" ]; then
         print_info "删除 sing-box 二进制文件..."
         rm -f "$INSTALL_DIR/sing-box"
     fi
-    
-    # 删除 prox 命令
+
     if [ -f "$PROX_CMD" ]; then
         print_info "删除 prox 命令..."
         rm -f "$PROX_CMD"
     fi
-    
+
     print_info "sing-box 卸载完成"
 }
 
 install() {
+    local socks5_server
+    local socks5_port
+    local need_auth
+    local socks5_user=""
+    local socks5_pass=""
+
     echo ""
     echo "========================================="
     echo "  sing-box 全局 TUN 一键部署脚本"
     echo "========================================="
     echo ""
-    
-    # 输入 SOCKS5 代理信息
-    read -p "请输入 SOCKS5 服务器地址: " SOCKS5_SERVER
-    read -p "请输入 SOCKS5 端口 [1080]: " SOCKS5_PORT
-    SOCKS5_PORT=${SOCKS5_PORT:-1080}
-    
-    read -p "是否需要认证? (y/n) [n]: " NEED_AUTH
-    NEED_AUTH=${NEED_AUTH:-n}
-    
-    SOCKS5_USER=""
-    SOCKS5_PASS=""
-    
-    if [[ "$NEED_AUTH" == "y" || "$NEED_AUTH" == "Y" ]]; then
-        read -p "请输入用户名: " SOCKS5_USER
-        read -sp "请输入密码: " SOCKS5_PASS
-        echo ""
-    fi
-    
-    # 验证输入
-    if [ -z "$SOCKS5_SERVER" ]; then
+
+    read -p "请输入 SOCKS5 服务器地址: " socks5_server
+    if [ -z "$socks5_server" ]; then
         print_error "SOCKS5 服务器地址不能为空"
         exit 1
     fi
-    
-    # 验证 SOCKS5 代理
-    verify_socks5 "$SOCKS5_SERVER" "$SOCKS5_PORT" "$SOCKS5_USER" "$SOCKS5_PASS"
-    
-    # 检查是否已安装
+
+    read -p "请输入 SOCKS5 端口 [1080]: " socks5_port
+    socks5_port=${socks5_port:-1080}
+
+    if ! validate_port "$socks5_port"; then
+        print_error "SOCKS5 端口无效: $socks5_port"
+        exit 1
+    fi
+
+    read -p "是否需要认证? (y/n) [n]: " need_auth
+    need_auth=${need_auth:-n}
+
+    if [[ "$need_auth" == "y" || "$need_auth" == "Y" ]]; then
+        read -p "请输入用户名: " socks5_user
+        read -sp "请输入密码: " socks5_pass
+        echo ""
+
+        if [ -z "$socks5_user" ] || [ -z "$socks5_pass" ]; then
+            print_error "已启用认证时，用户名和密码都不能为空"
+            exit 1
+        fi
+    fi
+
+    verify_socks5 "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
+
     if [ -f "$INSTALL_DIR/sing-box" ]; then
         print_warning "检测到已安装 sing-box"
-        read -p "是否重新安装? (y/n) [n]: " REINSTALL
-        if [[ "$REINSTALL" != "y" && "$REINSTALL" != "Y" ]]; then
-            print_info "跳过安装步骤"
-        else
+        read -p "是否重新安装 sing-box 二进制? (y/n) [n]: " REINSTALL
+        REINSTALL=${REINSTALL:-n}
+        if [[ "$REINSTALL" == "y" || "$REINSTALL" == "Y" ]]; then
             install_singbox
+        else
+            print_info "跳过二进制安装，保留现有版本"
         fi
     else
         install_singbox
     fi
-    
-    # 创建配置
-    create_config "$SOCKS5_SERVER" "$SOCKS5_PORT" "$SOCKS5_USER" "$SOCKS5_PASS"
-    
-    # 创建服务
+
+    create_config "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
+    validate_config
     create_service
-    
-    # 启动服务
     start_service
-    
-    # 创建 prox 管理命令
     create_prox_command
-    
+
     echo ""
     print_info "========================================="
     print_info "安装完成！"
     print_info "========================================="
     print_info "快速管理命令: sudo prox"
-    print_info ""
-    print_info "常用命令:"
-    print_info "  管理菜单: sudo prox"
-    print_info "  查看状态: systemctl status sing-box"
-    print_info "  查看日志: journalctl -u sing-box -f"
-    print_info "  重启服务: systemctl restart sing-box"
-    print_info "  停止服务: systemctl stop sing-box"
-    print_info "  配置文件: $CONFIG_DIR/config.json"
+    print_info "配置文件: $CONFIG_FILE"
+    print_info "缓存文件: $CACHE_FILE"
+    print_info "查看状态: systemctl status sing-box"
+    print_info "查看日志: journalctl -u sing-box -f"
+    print_info "配置校验: sing-box check -c $CONFIG_FILE"
     print_info "========================================="
     echo ""
 }
 
 main() {
     check_root
-    
+    check_requirements
+
     if [ "$1" == "uninstall" ]; then
         uninstall
     else
