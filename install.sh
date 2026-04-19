@@ -14,6 +14,7 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/sing-box"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 CACHE_FILE="$CONFIG_DIR/cache.db"
+PROXY_ENV_FILE="$CONFIG_DIR/proxy.env"
 SERVICE_FILE="/etc/systemd/system/sing-box.service"
 PROX_CMD="/usr/local/bin/prox"
 SCRIPT_VERSION="1.0.0"
@@ -148,22 +149,6 @@ check_requirements() {
             exit 1
         fi
     done
-}
-
-show_service_logs() {
-    if command -v journalctl >/dev/null 2>&1; then
-        echo ""
-        print_info "sing-box 最近日志:"
-        journalctl -u sing-box -n 50 --no-pager || true
-        echo ""
-    fi
-}
-
-check_tun_support() {
-    if [ ! -c /dev/net/tun ]; then
-        print_warning "未检测到 /dev/net/tun，TUN 模式可能无法启动"
-        print_warning "如果这是 VPS / 容器，请确认内核已启用 TUN 设备"
-    fi
 }
 
 json_escape() {
@@ -337,10 +322,12 @@ download_and_install_singbox() {
         --max-time 600
         --retry 3
         --retry-delay 2
+    )
+    append_socks5_proxy_args curl_download_args "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
+    curl_download_args+=(
         -o "$tmp_dir/sing-box.tar.gz"
         "$download_url"
     )
-    append_socks5_proxy_args curl_download_args "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
 
     if ! "${curl_download_args[@]}"; then
         print_error "下载失败，请检查网络连接或确认 SOCKS5 代理可正常访问 GitHub"
@@ -543,6 +530,15 @@ $auth_block      "domain_resolver": "dns-local"
 }
 EOF
 
+    umask 077
+    {
+        printf 'SOCKS5_SERVER=%q\n' "$socks5_server"
+        printf 'SOCKS5_PORT=%q\n' "$socks5_port"
+        printf 'SOCKS5_USER=%q\n' "$socks5_user"
+        printf 'SOCKS5_PASS=%q\n' "$socks5_pass"
+    } > "$PROXY_ENV_FILE"
+    chmod 600 "$PROXY_ENV_FILE"
+
     print_info "配置文件创建完成: $CONFIG_FILE"
 }
 
@@ -668,6 +664,7 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/sing-box"
 CONFIG_FILE="$CONFIG_DIR/config.json"
 CACHE_FILE="$CONFIG_DIR/cache.db"
+PROXY_ENV_FILE="$CONFIG_DIR/proxy.env"
 SERVICE_FILE="/etc/systemd/system/sing-box.service"
 PROX_CMD="/usr/local/bin/prox"
 DEFAULT_VERSION="1.13.8"
@@ -810,14 +807,65 @@ load_current_proxy_settings() {
     CURRENT_SOCKS5_USER=""
     CURRENT_SOCKS5_PASS=""
 
+    if [ -f "$PROXY_ENV_FILE" ]; then
+        # shellcheck disable=SC1090
+        . "$PROXY_ENV_FILE"
+        CURRENT_SOCKS5_SERVER="${SOCKS5_SERVER:-}"
+        CURRENT_SOCKS5_PORT="${SOCKS5_PORT:-}"
+        CURRENT_SOCKS5_USER="${SOCKS5_USER:-}"
+        CURRENT_SOCKS5_PASS="${SOCKS5_PASS:-}"
+
+        if [ -n "$CURRENT_SOCKS5_SERVER" ] && [ -n "$CURRENT_SOCKS5_PORT" ]; then
+            return 0
+        fi
+    fi
+
     if [ ! -f "$CONFIG_FILE" ]; then
         return 1
     fi
 
-    CURRENT_SOCKS5_SERVER=$(sed -n 's/.*"server": "\([^"]*\)".*/\1/p' "$CONFIG_FILE" | head -n 1)
-    CURRENT_SOCKS5_PORT=$(sed -n 's/.*"server_port": \([0-9]\+\).*/\1/p' "$CONFIG_FILE" | head -n 1)
-    CURRENT_SOCKS5_USER=$(sed -n 's/.*"username": "\([^"]*\)".*/\1/p' "$CONFIG_FILE" | head -n 1)
-    CURRENT_SOCKS5_PASS=$(sed -n 's/.*"password": "\([^"]*\)".*/\1/p' "$CONFIG_FILE" | head -n 1)
+    local proxy_block=""
+    proxy_block=$(awk '
+        BEGIN {
+            depth = 0
+            capture = 0
+            target = 0
+            block = ""
+        }
+        /"outbounds"[[:space:]]*:/ {
+            in_outbounds = 1
+        }
+        in_outbounds {
+            if ($0 ~ /^[[:space:]]*{[[:space:]]*$/) {
+                capture = 1
+                depth = 1
+                target = 0
+                block = $0 ORS
+                next
+            }
+
+            if (capture) {
+                block = block $0 ORS
+                if ($0 ~ /{/) depth++
+                if ($0 ~ /}/) depth--
+                if ($0 ~ /"tag"[[:space:]]*:[[:space:]]*"proxy"/) target = 1
+
+                if (depth == 0) {
+                    if (target) {
+                        printf "%s", block
+                        exit
+                    }
+                    capture = 0
+                    block = ""
+                }
+            }
+        }
+    ' "$CONFIG_FILE")
+
+    CURRENT_SOCKS5_SERVER=$(printf '%s' "$proxy_block" | sed -n 's/.*"server"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+    CURRENT_SOCKS5_PORT=$(printf '%s' "$proxy_block" | sed -n 's/.*"server_port"[[:space:]]*:[[:space:]]*\([0-9]\+\).*/\1/p' | head -n 1)
+    CURRENT_SOCKS5_USER=$(printf '%s' "$proxy_block" | sed -n 's/.*"username"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+    CURRENT_SOCKS5_PASS=$(printf '%s' "$proxy_block" | sed -n 's/.*"password"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
 
     if [ -z "$CURRENT_SOCKS5_SERVER" ] || [ -z "$CURRENT_SOCKS5_PORT" ]; then
         return 1
@@ -869,10 +917,12 @@ install_binary() {
         --max-time 600
         --retry 3
         --retry-delay 2
+    )
+    append_socks5_proxy_args curl_download_args "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
+    curl_download_args+=(
         -o "$tmp_dir/sing-box.tar.gz"
         "$download_url"
     )
-    append_socks5_proxy_args curl_download_args "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
     if ! "${curl_download_args[@]}"; then
         print_error "下载失败，请检查网络连接或确认 SOCKS5 代理可正常访问 GitHub"
         exit 1
@@ -1236,6 +1286,8 @@ run_install() {
     local need_auth
     local socks5_user=""
     local socks5_pass=""
+    local overwrite_config="y"
+    local should_write_config=1
 
     show_banner
 
@@ -1278,8 +1330,19 @@ run_install() {
         install_singbox "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
     fi
 
+    if [ -f "$CONFIG_FILE" ]; then
+        print_warning "检测到现有配置文件: $CONFIG_FILE"
+        read_prompt overwrite_config "是否覆盖现有配置文件? (y/n) [n]: " "n"
+        if [[ "$overwrite_config" != "y" && "$overwrite_config" != "Y" ]]; then
+            should_write_config=0
+            print_info "保留现有配置，当前输入的 SOCKS5 参数不会写入配置文件"
+        fi
+    fi
+
     create_prox_command
-    create_config "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
+    if [ "$should_write_config" -eq 1 ]; then
+        create_config "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
+    fi
     validate_config
     create_service
     start_service
