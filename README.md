@@ -1,12 +1,13 @@
 # sing-box Linux 全局 TUN 一键部署脚本
 
-这是一个用于 Linux 的 `sing-box` 一键安装脚本。输入 SOCKS5 代理信息后，脚本会生成兼容当前 `sing-box 1.13+` 的 TUN 配置，创建 `systemd` 服务，并提供 `sudo prox` 交互式管理菜单。
+这是一个用于 Linux 的 `sing-box` 一键安装脚本。现在的一键入口会先安装 `prox` 管理命令，再进入 `prox` 菜单，由 `prox` 负责安装、卸载和修改透明代理。
 
 运行脚本后会先显示当前脚本版本，便于确认你拿到的是不是最新发布内容。
 
 ## 功能特点
 
-- 一键安装并自动下载最新稳定版 `sing-box`
+- 一键安装 `prox` 管理命令并自动进入管理菜单
+- 通过 `prox` 安装并自动下载最新稳定版 `sing-box`
 - 仅使用 GitHub 官方源下载 `sing-box`
 - 安装前自动验证 SOCKS5 代理连通性
 - 验证成功后显示代理出口 IP 和国家
@@ -34,18 +35,25 @@
 ### 一键安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/quick-install.sh | sudo bash
 ```
 
-如果无法直接访问 GitHub，可以先下载脚本后再执行：
+说明：
+
+- 上面的命令调用的是一个很薄的引导脚本
+- 引导脚本会先下载最新 `install.sh`
+- 然后把 `prox` 和本地 `install.sh` 安装到系统里
+- 安装完成后自动进入 `prox` 菜单
+
+如果你想手动检查脚本内容，也可以先下载再执行：
 
 ```bash
 curl -O https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/install.sh
 chmod +x install.sh
-sudo ./install.sh
+sudo ./install.sh bootstrap-prox
 ```
 
-安装过程会提示：
+进入 `prox` 后，先选择“安装/更新透明代理”，安装过程会提示：
 
 1. 输入 SOCKS5 服务器地址，默认 `192.168.200.1`
 2. 输入 SOCKS5 端口，默认 `44444`
@@ -53,7 +61,7 @@ sudo ./install.sh
 4. 在需要时输入用户名和密码
 5. 执行代理连通性验证，并显示出口 IP / 国家
 
-安装完成后可使用：
+之后你可以随时使用：
 
 ```bash
 sudo prox
@@ -69,6 +77,7 @@ sudo prox
 - 缓存文件：`/etc/sing-box/cache.db`
 - 服务文件：`/etc/systemd/system/sing-box.service`
 - 管理命令：`/usr/local/bin/prox`
+- 本地安装脚本：`/usr/local/lib/onekey-p-linux/install.sh`
 
 配置默认行为：
 
@@ -104,16 +113,21 @@ sudo prox
 
 菜单支持：
 
+- 安装/更新透明代理
 - 启动服务
 - 停止服务
 - 重启服务
 - 查看状态
 - 查看日志
-- 编辑配置
+- 修改透明代理配置
 - 重新安装 `sing-box` 二进制
-- 卸载
+- 完整卸载 `prox + sing-box`
 
-注意：菜单里的“重新安装”只会更新 `sing-box` 二进制，保留现有配置文件。
+注意：
+
+- 菜单里的“安装/更新透明代理”会进入正式安装流程
+- 菜单里的“重新安装”只会更新 `sing-box` 二进制，保留现有配置文件
+- 菜单里的“完整卸载”会删除 `prox`、`sing-box`、配置文件、缓存和 systemd 服务
 
 ### 使用 systemd
 
@@ -145,12 +159,13 @@ sudo ./install.sh uninstall
 sudo prox
 ```
 
-卸载会删除：
+通过 `sudo prox` 的“完整卸载 prox + sing-box”执行卸载时，会删除：
 
+- `prox` 管理命令
 - `sing-box` 二进制
 - 配置文件和缓存
 - `systemd` 服务文件
-- `prox` 管理命令
+- 本地安装脚本
 
 ## 故障排查
 

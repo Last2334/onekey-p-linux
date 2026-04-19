@@ -17,7 +17,9 @@ CACHE_FILE="$CONFIG_DIR/cache.db"
 PROXY_ENV_FILE="$CONFIG_DIR/proxy.env"
 SERVICE_FILE="/etc/systemd/system/sing-box.service"
 PROX_CMD="/usr/local/bin/prox"
-SCRIPT_VERSION="1.0.0"
+SCRIPT_INSTALL_DIR="/usr/local/lib/onekey-p-linux"
+LOCAL_INSTALL_SCRIPT="$SCRIPT_INSTALL_DIR/install.sh"
+SCRIPT_VERSION="1.1.0"
 DEFAULT_VERSION="1.13.8"
 DEFAULT_SOCKS5_SERVER="192.168.200.1"
 DEFAULT_SOCKS5_PORT="44444"
@@ -149,6 +151,20 @@ check_requirements() {
             exit 1
         fi
     done
+}
+
+persist_install_script() {
+    local source_script="${1:-$0}"
+
+    if [ ! -f "$source_script" ]; then
+        print_error "无法找到安装脚本源文件: $source_script"
+        exit 1
+    fi
+
+    mkdir -p "$SCRIPT_INSTALL_DIR"
+    cp "$source_script" "$LOCAL_INSTALL_SCRIPT"
+    chmod 0755 "$LOCAL_INSTALL_SCRIPT"
+    print_info "本地安装脚本已更新: $LOCAL_INSTALL_SCRIPT"
 }
 
 json_escape() {
@@ -667,6 +683,8 @@ CACHE_FILE="$CONFIG_DIR/cache.db"
 PROXY_ENV_FILE="$CONFIG_DIR/proxy.env"
 SERVICE_FILE="/etc/systemd/system/sing-box.service"
 PROX_CMD="/usr/local/bin/prox"
+SCRIPT_INSTALL_DIR="/usr/local/lib/onekey-p-linux"
+INSTALL_SCRIPT="$SCRIPT_INSTALL_DIR/install.sh"
 DEFAULT_VERSION="1.13.8"
 TTY_AVAILABLE=0
 GITHUB_API_URL="https://api.github.com/repos/SagerNet/sing-box/releases/latest"
@@ -976,6 +994,16 @@ pick_editor() {
     exit 1
 }
 
+ensure_install_script() {
+    if [ -x "$INSTALL_SCRIPT" ]; then
+        return 0
+    fi
+
+    print_error "未找到本地安装脚本: $INSTALL_SCRIPT"
+    print_error "请重新执行 quick-install.sh 重新安装 prox"
+    return 1
+}
+
 show_status() {
     echo ""
     echo "========================================="
@@ -1017,17 +1045,27 @@ show_menu() {
     echo "  sing-box 管理菜单"
     echo "========================================="
     show_status
-    echo "1) 启动服务"
-    echo "2) 停止服务"
-    echo "3) 重启服务"
-    echo "4) 查看状态"
-    echo "5) 查看日志"
-    echo "6) 编辑配置"
-    echo "7) 重新安装 sing-box 二进制"
-    echo "8) 卸载"
+    echo "1) 安装/更新透明代理"
+    echo "2) 启动服务"
+    echo "3) 停止服务"
+    echo "4) 重启服务"
+    echo "5) 查看状态"
+    echo "6) 查看日志"
+    echo "7) 修改透明代理配置"
+    echo "8) 重新安装 sing-box 二进制"
+    echo "9) 完整卸载 prox + sing-box"
     echo "0) 退出"
     echo "========================================="
     echo ""
+}
+
+install_or_update_proxy() {
+    if ! ensure_install_script; then
+        return
+    fi
+
+    print_info "进入透明代理安装流程..."
+    bash "$INSTALL_SCRIPT" install
 }
 
 start_service() {
@@ -1098,7 +1136,7 @@ edit_config() {
     fi
 
     editor=$(pick_editor)
-    print_info "使用编辑器: $editor"
+    print_info "开始修改透明代理配置，使用编辑器: $editor"
     "$editor" "$CONFIG_FILE"
 
     if "$INSTALL_DIR/sing-box" check -c "$CONFIG_FILE"; then
@@ -1169,10 +1207,15 @@ uninstall_local() {
     rm -rf "$CONFIG_DIR"
     rm -f "$INSTALL_DIR/sing-box"
     rm -f "$PROX_CMD"
+    rm -f "$INSTALL_SCRIPT"
+
+    if [ -d "$SCRIPT_INSTALL_DIR" ] && [ -z "$(ls -A "$SCRIPT_INSTALL_DIR" 2>/dev/null)" ]; then
+        rmdir "$SCRIPT_INSTALL_DIR" 2>/dev/null || true
+    fi
 }
 
 uninstall() {
-    print_warning "卸载将删除 sing-box、配置文件、缓存和管理命令"
+    print_warning "完整卸载将删除 prox、sing-box、配置文件、缓存和 systemd 服务"
     read_prompt CONFIRM "确认卸载? (y/n) [n]: " "n"
 
     if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
@@ -1182,6 +1225,7 @@ uninstall() {
 
     uninstall_local
     print_info "卸载完成"
+    exit 0
 }
 
 main() {
@@ -1190,39 +1234,43 @@ main() {
 
     while true; do
         show_menu
-        read_prompt choice "请选择操作 [0-8]: "
+        read_prompt choice "请选择操作 [0-9]: "
 
         case "$choice" in
             1)
-                start_service
+                install_or_update_proxy
                 pause_prompt
                 ;;
             2)
-                stop_service
+                start_service
                 pause_prompt
                 ;;
             3)
-                restart_service
+                stop_service
                 pause_prompt
                 ;;
             4)
-                view_status
+                restart_service
                 pause_prompt
                 ;;
             5)
-                view_logs
+                view_status
+                pause_prompt
                 ;;
             6)
+                view_logs
+                ;;
+            7)
                 edit_config
                 pause_prompt
                 ;;
-            7)
+            8)
                 reinstall
                 pause_prompt
                 ;;
-            8)
+            9)
                 uninstall
-                exit 0
+                pause_prompt
                 ;;
             0)
                 print_info "退出管理菜单"
@@ -1277,7 +1325,32 @@ uninstall() {
         rm -f "$PROX_CMD"
     fi
 
+    if [ -f "$LOCAL_INSTALL_SCRIPT" ]; then
+        print_info "删除本地安装脚本..."
+        rm -f "$LOCAL_INSTALL_SCRIPT"
+    fi
+
+    if [ -d "$SCRIPT_INSTALL_DIR" ] && [ -z "$(ls -A "$SCRIPT_INSTALL_DIR" 2>/dev/null)" ]; then
+        rmdir "$SCRIPT_INSTALL_DIR" 2>/dev/null || true
+    fi
+
     print_info "sing-box 卸载完成"
+}
+
+bootstrap_prox() {
+    show_banner
+    persist_install_script "$0"
+    create_prox_command
+
+    echo ""
+    print_info "========================================="
+    print_info "prox 已安装完成"
+    print_info "========================================="
+    print_info "管理命令: sudo prox"
+    print_info "本地安装脚本: $LOCAL_INSTALL_SCRIPT"
+    print_info "接下来可在 prox 菜单中安装、卸载或修改透明代理"
+    print_info "========================================="
+    echo ""
 }
 
 run_install() {
@@ -1290,6 +1363,8 @@ run_install() {
     local should_write_config=1
 
     show_banner
+    persist_install_script "$0"
+    create_prox_command
 
     read_prompt socks5_server "请输入 SOCKS5 服务器地址 [$DEFAULT_SOCKS5_SERVER]: " "$DEFAULT_SOCKS5_SERVER"
     if [ -z "$socks5_server" ]; then
@@ -1339,7 +1414,6 @@ run_install() {
         fi
     fi
 
-    create_prox_command
     if [ "$should_write_config" -eq 1 ]; then
         create_config "$socks5_server" "$socks5_port" "$socks5_user" "$socks5_pass"
     fi
@@ -1366,11 +1440,20 @@ main() {
     check_requirements
     init_tty
 
-    if [ "$1" == "uninstall" ]; then
-        uninstall
-    else
-        run_install
-    fi
+    case "${1:-install}" in
+        uninstall)
+            uninstall
+            ;;
+        bootstrap-prox)
+            bootstrap_prox
+            ;;
+        install)
+            run_install
+            ;;
+        *)
+            run_install
+            ;;
+    esac
 }
 
 main "$@"
