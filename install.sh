@@ -19,7 +19,7 @@ SERVICE_FILE="/etc/systemd/system/sing-box.service"
 PROX_CMD="/usr/local/bin/prox"
 SCRIPT_INSTALL_DIR="/usr/local/lib/onekey-p-linux"
 LOCAL_INSTALL_SCRIPT="$SCRIPT_INSTALL_DIR/install.sh"
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.1.1"
 DEFAULT_VERSION="1.13.8"
 DEFAULT_SOCKS5_SERVER="192.168.200.1"
 DEFAULT_SOCKS5_PORT="44444"
@@ -162,6 +162,12 @@ persist_install_script() {
     fi
 
     mkdir -p "$SCRIPT_INSTALL_DIR"
+
+    if [ -f "$LOCAL_INSTALL_SCRIPT" ] && [ "$source_script" -ef "$LOCAL_INSTALL_SCRIPT" ]; then
+        print_info "本地安装脚本已是最新路径: $LOCAL_INSTALL_SCRIPT"
+        return
+    fi
+
     cp "$source_script" "$LOCAL_INSTALL_SCRIPT"
     chmod 0755 "$LOCAL_INSTALL_SCRIPT"
     print_info "本地安装脚本已更新: $LOCAL_INSTALL_SCRIPT"
