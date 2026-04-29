@@ -121,13 +121,30 @@ sudo prox
 - 查看日志
 - 修改透明代理配置
 - 重新安装 `sing-box` 二进制
+- 检查透明代理是否激活
 - 完整卸载 `prox + sing-box`
 
 注意：
 
 - 菜单里的“安装/更新透明代理”会进入正式安装流程
 - 菜单里的“重新安装”只会更新 `sing-box` 二进制，保留现有配置文件
+- 菜单里的“检查透明代理是否激活”会检查服务状态、`tun0`、公网路由和当前公网出口 IP
 - 菜单里的“完整卸载”会删除 `prox`、`sing-box`、配置文件、缓存和 systemd 服务
+
+### 更新服务器上的 prox
+
+在服务器上重新执行快速安装命令即可更新 `prox` 管理命令和本地安装脚本：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Last2334/onekey-p-linux/main/quick-install.sh | sudo bash
+```
+
+该操作会刷新：
+
+- `/usr/local/bin/prox`
+- `/usr/local/lib/onekey-p-linux/install.sh`
+
+不会删除现有 `/etc/sing-box/config.json`。如果只想更新 `sing-box` 二进制，进入 `sudo prox` 后选择“重新安装 sing-box 二进制”。
 
 ### 使用 systemd
 

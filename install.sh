@@ -19,7 +19,7 @@ SERVICE_FILE="/etc/systemd/system/sing-box.service"
 PROX_CMD="/usr/local/bin/prox"
 SCRIPT_INSTALL_DIR="/usr/local/lib/onekey-p-linux"
 LOCAL_INSTALL_SCRIPT="$SCRIPT_INSTALL_DIR/install.sh"
-SCRIPT_VERSION="1.1.1"
+SCRIPT_VERSION="1.2.0"
 DEFAULT_VERSION="1.13.8"
 DEFAULT_SOCKS5_SERVER="192.168.200.1"
 DEFAULT_SOCKS5_PORT="44444"
@@ -825,6 +825,36 @@ append_socks5_proxy_args() {
     fi
 }
 
+extract_json_string() {
+    local json="$1"
+    local key="$2"
+
+    printf '%s' "$json" | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n 1
+}
+
+fetch_public_ip() {
+    local response=""
+    local ip=""
+
+    if ! command -v curl >/dev/null 2>&1; then
+        return 1
+    fi
+
+    response=$(curl -fsS --connect-timeout 8 --max-time 15 https://ipwho.is/ 2>/dev/null | tr -d '\n' || true)
+    ip=$(extract_json_string "$response" "ip")
+
+    if [ -z "$ip" ]; then
+        response=$(curl -fsS --connect-timeout 8 --max-time 15 https://ipapi.co/json/ 2>/dev/null | tr -d '\n' || true)
+        ip=$(extract_json_string "$response" "ip")
+    fi
+
+    if [ -z "$ip" ]; then
+        return 1
+    fi
+
+    printf '%s' "$ip"
+}
+
 load_current_proxy_settings() {
     CURRENT_SOCKS5_SERVER=""
     CURRENT_SOCKS5_PORT=""
@@ -1059,7 +1089,8 @@ show_menu() {
     echo "6) 查看日志"
     echo "7) 修改透明代理配置"
     echo "8) 重新安装 sing-box 二进制"
-    echo "9) 完整卸载 prox + sing-box"
+    echo "9) 检查透明代理是否激活"
+    echo "10) 完整卸载 prox + sing-box"
     echo "0) 退出"
     echo "========================================="
     echo ""
@@ -1131,6 +1162,68 @@ view_logs() {
     print_info "查看实时日志 (按 Ctrl+C 退出)..."
     sleep 1
     journalctl -u sing-box -f
+}
+
+check_proxy_activation() {
+    local service_active=0
+    local config_ok=0
+    local tun_ok=0
+    local route_ok=0
+    local route_line=""
+    local public_ip=""
+
+    print_info "检查透明代理激活状态..."
+
+    if systemctl is-active --quiet sing-box; then
+        service_active=1
+        print_info "服务状态: 运行中"
+    else
+        print_error "服务状态: 未运行"
+    fi
+
+    if [ -f "$CONFIG_FILE" ]; then
+        config_ok=1
+        print_info "配置文件: 存在 ($CONFIG_FILE)"
+    else
+        print_error "配置文件: 不存在"
+    fi
+
+    if command -v ip >/dev/null 2>&1; then
+        if ip link show tun0 >/dev/null 2>&1; then
+            tun_ok=1
+            print_info "TUN 设备: tun0 已存在"
+        else
+            print_error "TUN 设备: 未检测到 tun0"
+        fi
+
+        route_line=$(ip route get 1.1.1.1 2>/dev/null | head -n 1 || true)
+        if printf '%s' "$route_line" | grep -Eq '(^|[[:space:]])dev[[:space:]]+tun0([[:space:]]|$)'; then
+            route_ok=1
+            print_info "公网路由: 1.1.1.1 已走 tun0"
+        else
+            print_warning "公网路由: 1.1.1.1 未确认走 tun0"
+            if [ -n "$route_line" ]; then
+                print_warning "当前路由: $route_line"
+            fi
+        fi
+    else
+        print_warning "未找到 ip 命令，跳过 TUN 和路由检查"
+    fi
+
+    if public_ip=$(fetch_public_ip); then
+        print_info "当前公网出口 IP: $public_ip"
+    else
+        print_warning "无法获取当前公网出口 IP"
+    fi
+
+    echo ""
+    if [ "$service_active" -eq 1 ] && [ "$config_ok" -eq 1 ] && [ "$tun_ok" -eq 1 ] && [ "$route_ok" -eq 1 ]; then
+        print_info "结论: 透明代理已激活"
+    elif [ "$service_active" -eq 1 ] && [ "$tun_ok" -eq 1 ]; then
+        print_warning "结论: 服务和 TUN 已启动，但未能确认公网路由已接管"
+    else
+        print_error "结论: 透明代理未激活"
+    fi
 }
 
 edit_config() {
@@ -1240,7 +1333,7 @@ main() {
 
     while true; do
         show_menu
-        read_prompt choice "请选择操作 [0-9]: "
+        read_prompt choice "请选择操作 [0-10]: "
 
         case "$choice" in
             1)
@@ -1275,6 +1368,10 @@ main() {
                 pause_prompt
                 ;;
             9)
+                check_proxy_activation
+                pause_prompt
+                ;;
+            10)
                 uninstall
                 pause_prompt
                 ;;
